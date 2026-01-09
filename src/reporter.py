@@ -1,96 +1,70 @@
-"""
 import pandas as pd
-from .models import JornadaInconsistente
+import os
+from .processador import ResultadoJornada
 
 
 class ExcelReporter:
-    def exportar_erros(self, lista_erros: list[JornadaInconsistente], nome_arquivo: str):
-        if not lista_erros:
-            print("Nenhum erro para exportar.")
+    def gerar_relatorio_excel(self, resultados: list[ResultadoJornada], nome_arquivo: str = "Relatorio_Completo.xlsx"):
+        """
+        Recebe os dados processados e gera um arquivo Excel real na pasta data/output.
+        """
+
+        # 1. Validação de Segurança
+        if not resultados:
+            print("⚠️ Nenhum dado para gerar relatório.")
             return
 
-        print(f"Gerando relatório expandido com {len(lista_erros)} inconsistências...")
+        print(f"Gerando Excel com {len(resultados)} jornadas...")
 
-        dados_formatados = []
+        # 2. Descobre o número máximo de batidas para criar as colunas (Batida 1, 2, 3...)
+        # Se o recordista tiver 8 batidas, o Excel terá 8 colunas de batida.
+        max_batidas = max((len(r.batidas) for r in resultados), default=0)
 
-        for erro in lista_erros:
-            # 1. Cria a base da linha
+        # 3. Transforma a lista de Objetos em lista de Dicionários (formato do Pandas)
+        dados_para_dataframe = []
+
+        for r in resultados:
+            # Dados base da linha
             linha = {
-                "NOME": erro.nome_colaborador,
-                "DATA": erro.data_referencia,
-                "TOTAL": len(erro.batidas_registradas)  # Útil para filtrar depois
+                "NOME": r.nome,
+                "DATA": r.data_inicio_str,
+                "STATUS": r.status,
+                "DURAÇÃO": r.duracao,
+                "QTD_BATIDAS": len(r.batidas)  # Coluna extra útil para filtro
             }
 
+            # Preenchimento Dinâmico das Batidas
+            # Se a pessoa tem 3 batidas, preenche Batida 1, 2 e 3.
+            for i, horario in enumerate(r.batidas):
+                coluna = f"BATIDA {i + 1}"
+                linha[coluna] = horario
 
-            for i, horario in enumerate(erro.batidas_registradas):
-                nome_coluna = f"BATIDA {i + 1}"
-                linha[nome_coluna] = horario
+            dados_para_dataframe.append(linha)
 
-            dados_formatados.append(linha)
+        # 4. Cria o DataFrame
+        df = pd.DataFrame(dados_para_dataframe)
 
+        # 5. Organização Visual das Colunas
+        # O Pandas pode bagunçar a ordem, então forçamos a ordem correta
+        colunas_fixas = ["NOME", "DATA", "STATUS", "DURAÇÃO", "QTD_BATIDAS"]
+        colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
-        df_relatorio = pd.DataFrame(dados_formatados)
-
-        colunas_existentes = df_relatorio.columns.tolist()
-
-        colunas_fixas = ["NOME", "DATA", "TOTAL"]
-        colunas_batidas = sorted([col for col in colunas_existentes if col.startswith("BATIDA")])
-
+        # Garante que só vamos ordenar colunas que realmente existem no dataframe
         ordem_final = colunas_fixas + colunas_batidas
 
-        ordem_final = [c for c in ordem_final if c in df_relatorio.columns]
+        # Reordena e preenche vazios com "" (estético)
+        df = df.reindex(columns=ordem_final).fillna("")
 
-        df_relatorio = df_relatorio[ordem_final]
+        # 6. Salva o Arquivo
+        caminho_pasta = "data/output"
+        os.makedirs(caminho_pasta, exist_ok=True)  # Cria a pasta se não existir
 
-        # Salva o arquivo
-        caminho_completo = f"data/output/{nome_arquivo}"
-        df_relatorio.to_excel(caminho_completo, index=False)
-        print(f"✅ Relatório salvo com sucesso em: {caminho_completo}")
+        caminho_completo = os.path.join(caminho_pasta, nome_arquivo)
 
-
-"""
-
-from .models import JornadaInconsistente
-
-
-class TextReporter:
-    def gerar_texto_copia_cola(self, lista_erros: list[JornadaInconsistente]):
-        if not lista_erros:
-            print("Nenhum erro encontrado.")
-            return
-
-        # 1. Descobrir qual o número MÁXIMO de batidas entre todos os erros
-        # Isso serve para criar o cabeçalho dinâmico (Batida 1, Batida 2... Batida N)
-        max_batidas = 0
-        for erro in lista_erros:
-            qtd = len(erro.batidas_registradas)
-            if qtd > max_batidas:
-                max_batidas = qtd
-
-        # 2. Criar o Cabeçalho
-        # Ex: NOME [tab] DATA [tab] BATIDA 1 [tab] BATIDA 2...
-        colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
-        cabecalho = ["NOME", "DATA"] + colunas_batidas
-
-        # O \t é o código invisível para "Tabulação"
-        texto_final = "\t".join(cabecalho) + "\n"
-
-        # 3. Criar as Linhas
-        for erro in lista_erros:
-            batidas = erro.batidas_registradas
-
-            # Preenche com vazio se a pessoa tiver menos batidas que o máximo
-            # Ex: Se o max é 5 e eu tenho 3, adiciona 2 vazios no final
-            faltam = max_batidas - len(batidas)
-            batidas_preenchidas = batidas + [""] * faltam
-
-            # Monta a linha
-            linha = [erro.nome_colaborador, erro.data_referencia] + batidas_preenchidas
-            texto_final += "\t".join(linha) + "\n"
-
-        # 4. Imprime no console para o usuário copiar
-        print("=" * 60)
-        print("COPIE O TEXTO ABAIXO E COLE NO EXCEL (Ctrl+C / Ctrl+V):")
-        print("=" * 60)
-        print(texto_final)
-        print("=" * 60)
+        try:
+            df.to_excel(caminho_completo, index=False)
+            print("=" * 60)
+            print(f"✅ SUCESSO! Relatório salvo em: {caminho_completo}")
+            print("=" * 60)
+        except PermissionError:
+            print(f"❌ ERRO: O arquivo '{nome_arquivo}' está aberto no Excel. Feche-o e tente novamente.")
