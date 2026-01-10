@@ -33,8 +33,7 @@ class ExcelReporter:
                 "QTD_BATIDAS": len(r.batidas)  # Coluna extra útil para filtro
             }
 
-            # Preenchimento Dinâmico das Batidas
-            # Se a pessoa tem 3 batidas, preenche Batida 1, 2 e 3.
+            # Preenchimento Dinâmico das Colunas Batidas
             for i, horario in enumerate(r.batidas):
                 coluna = f"BATIDA {i + 1}"
                 linha[coluna] = horario
@@ -45,7 +44,6 @@ class ExcelReporter:
         df = pd.DataFrame(dados_para_dataframe)
 
         # 5. Organização Visual das Colunas
-        # O Pandas pode bagunçar a ordem, então forçamos a ordem correta
         colunas_fixas = ["NOME", "DATA", "STATUS", "DURAÇÃO", "QTD_BATIDAS"]
         colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
@@ -54,6 +52,14 @@ class ExcelReporter:
 
         # Reordena e preenche vazios com "" (estético)
         df = df.reindex(columns=ordem_final).fillna("")
+
+        print("Limpando marcadores de dia (DD) para visualização...")
+
+        for col in colunas_batidas:
+            # Verifica se a coluna realmente existe (segurança para casos vazios)
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(r"\(\d+\)\s*", "", regex=True)
+
 
         # 6. Salva o Arquivo
         caminho_pasta = "data/output"

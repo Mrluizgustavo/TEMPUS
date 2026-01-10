@@ -4,7 +4,7 @@ from datetime import datetime
 
 # CONFIGURAÇÃO DE SEGURANÇA (Sem plantão)
 # Se o intervalo for maior que isso, CORTE, não importa se é impar ou par.
-LIMITE_CORTE_ABSOLUTO = 15  # Horas
+LIMITE_CORTE_ABSOLUTO = 13  # Horas
 
 
 @dataclass
@@ -27,7 +27,7 @@ class Processador:
         self.df["HORA_DELTA"] = pd.to_timedelta(self.df["BATIDA"], unit="m")
         self.df["DATETIME"] = self.df["DATA"] + self.df["HORA_DELTA"]
         self.df.dropna(subset=["DATETIME"], inplace=True)
-        # Ordenação absoluta é vital
+        # Ordenação por nome e datetime
         self.df.sort_values(by=["NOME", "DATETIME"], inplace=True)
         self.df.reset_index(drop=True, inplace=True)
 
@@ -55,10 +55,8 @@ class Processador:
             diff_horas = (hora_atual - ultima_hora).total_seconds() / 3600
             nova_jornada = False
 
-            # --- LÓGICA REFINADA ---
+            # --- LÓGICA ---
 
-            # Se passou de 15h, é impossível ser a mesma jornada na sua empresa.
-            # Corta mesmo se estiver ímpar (evita colar dias).
             if diff_horas > LIMITE_CORTE_ABSOLUTO:
                 nova_jornada = True
 
@@ -66,8 +64,7 @@ class Processador:
             elif diff_horas < 4:
                 nova_jornada = False
 
-            # REGRA 3: Zona de Ambiguidade (5h a 15h)
-            # Aqui confiamos no Par/Ímpar
+            # REGRA 3: Zona de Ambiguidade
             else:
                 if batidas_na_jornada % 2 == 0:
                     nova_jornada = True
@@ -84,33 +81,60 @@ class Processador:
             ultima_hora = hora_atual
 
     def _analisar_status(self, batidas_dt: pd.Series) -> tuple[str, str]:
-        qtd = len(batidas_dt)
-        inicio = batidas_dt.iloc[0]
-        fim = batidas_dt.iloc[-1]
-        duracao_horas = (fim - inicio).total_seconds() / 3600
 
-        horas_int = int(duracao_horas)
-        minutos_int = int((duracao_horas - horas_int) * 60)
+        batidas = batidas_dt.astype(str)
+        dados = batidas.str.extract(r"\((\d+)\)\s*(\d+:\d+)")
+
+        if not dados.isnull().values.any():
+
+            batidas_dt = pd.to_datetime("2024-01-" + dados[0] + " " + dados[1])
+        else:
+            batidas_dt = pd.to_datetime(batidas, errors='coerce')
+
+
+        qtd = len(batidas_dt)
+
+        min_intervalo_horas = 50 / 60 # 50 minutos
+        max_intervalo_horas = 70 / 60 # 1 hora e 10 minutos
+
+        if qtd % 2 != 0:
+            return "ERRO_IMPAR", "--:--"
+
+
+        batidas_dt = batidas_dt.sort_values()
+
+        entradas = batidas_dt.iloc[::2].reset_index(drop=True)
+        saidas = batidas_dt.iloc[1::2].reset_index(drop=True)
+
+        tempo_total = (saidas - entradas).sum()
+        duracao_horas = tempo_total.total_seconds() / 3600
+
+        total_segundos = (saidas - entradas).sum().total_seconds()
+
+        horas_int = int(total_segundos // 3600)
+        restante_segundos = total_segundos % 3600
+        minutos_int = int(round(restante_segundos / 60))
         duracao_str = f"{horas_int:02d}:{minutos_int:02d}"
 
-        # Casos de batidas irregulares
+        # 2.REGRA DE NEGÓCIO
+        if qtd == 4:
+            saida = batidas_dt.iloc[1]
+            retorno = batidas_dt.iloc[2]
+            intervalo = (retorno - saida)
+            duracao_intervalo = intervalo.total_seconds() / 3600
 
-        # 1. É Impar?
-        if qtd % 2 != 0:
-            return "ERRO_IMPAR", duracao_str
+            # Intervalo irregular
+            if duracao_intervalo < min_intervalo_horas or duracao_intervalo > max_intervalo_horas:
+                return "INTERVALO IRREGULAR", duracao_str
 
-        # 2. É Par, mas tem batidas demais?
-        if qtd > 4:
-            return f"REVISAO_QTD_({qtd})", duracao_str
 
-        # 3. Intervalo estranha
-        if duracao_horas < 1:
-            return "REVISAO_CURTA", duracao_str
-
-        if duracao_horas > 14:
+        # Jornada excessiva
+        if duracao_horas > 10:
             return "REVISAO_LONGA", duracao_str
 
+        # Se passou por tudo, está OK
         return "OK", duracao_str
+
 
     def executar_analise(self, data_inicio_filtro=None, data_fim_filtro=None) -> list[ResultadoJornada]:
         self._preparar_timeline()
