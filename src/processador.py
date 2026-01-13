@@ -2,15 +2,14 @@ import pandas as pd
 from dataclasses import dataclass
 from datetime import datetime
 
-# CONFIGURAÇÃO DE SEGURANÇA (Sem plantão)
-# Se o intervalo for maior que isso, CORTE, não importa se é impar ou par.
+# CONFIGURAÇÃO DE SEGURANÇA
 LIMITE_CORTE_ABSOLUTO = 13  # Horas
 
 
 @dataclass
 class ResultadoJornada:
     id_jornada: int
-    nome: str
+    nome: str  # Voltamos a usar apenas o Nome
     data_inicio_obj: datetime
     data_inicio_str: str
     batidas: list[str]
@@ -23,13 +22,28 @@ class Processador:
         self.df = df.copy()
 
     def _preparar_timeline(self):
+        # Conversão de Data e Hora
         self.df["DATA"] = pd.to_datetime(self.df["DATA"], errors="coerce")
         self.df["HORA_DELTA"] = pd.to_timedelta(self.df["BATIDA"], unit="m")
         self.df["DATETIME"] = self.df["DATA"] + self.df["HORA_DELTA"]
+
         self.df.dropna(subset=["DATETIME"], inplace=True)
-        # Ordenação por nome e datetime
+
+        # ORDENAÇÃO POR NOME (Essencial para agrupar as batidas da mesma pessoa)
         self.df.sort_values(by=["NOME", "DATETIME"], inplace=True)
+
+        self._remover_duplicatas()
         self.df.reset_index(drop=True, inplace=True)
+
+    def _remover_duplicatas(self):
+        # Verifica se é a mesma pessoa (NOME) e se o tempo é curto (< 3 min)
+        mesma_pessoa = self.df["NOME"] == self.df["NOME"].shift(1)
+        diff_tempo = self.df["DATETIME"].diff()
+        tolerancia = pd.Timedelta(minutes=3)
+        mascara_duplicadas = mesma_pessoa & (diff_tempo < tolerancia)
+
+        if mascara_duplicadas.sum() > 0:
+            self.df = self.df[~mascara_duplicadas].copy()
 
     def _segmentar_jornadas(self):
         self.df["ID_JORNADA"] = 0
@@ -43,7 +57,7 @@ class Processador:
             nome_atual = row.NOME
             hora_atual = row.DATETIME
 
-            # Mudou de pessoa? Novo ID.
+            # Mudou de pessoa? Nova Jornada.
             if nome_atual != ultimo_nome:
                 id_atual += 1
                 batidas_na_jornada = 1
@@ -52,24 +66,24 @@ class Processador:
                 ultima_hora = hora_atual
                 continue
 
-            diff_horas = (hora_atual - ultima_hora).total_seconds() / 3600
+            # Cálculo de Gaps
+            diff_horas = 0
+            if ultima_hora:
+                diff_horas = (hora_atual - ultima_hora).total_seconds() / 3600
+
             nova_jornada = False
 
-            # --- LÓGICA ---
-
+            # Regras de Quebra de Jornada
             if diff_horas > LIMITE_CORTE_ABSOLUTO:
                 nova_jornada = True
-
-            # REGRA 2: Almoço/Café
             elif diff_horas < 4:
                 nova_jornada = False
-
-            # REGRA 3: Zona de Ambiguidade
             else:
+                # Zona de ambiguidade (entre 4h e 13h)
                 if batidas_na_jornada % 2 == 0:
-                    nova_jornada = True
+                    nova_jornada = True  # Par fechado, nova jornada
                 else:
-                    nova_jornada = False
+                    nova_jornada = False  # Ímpar aberto, continuação (almoço longo)
 
             if nova_jornada:
                 id_atual += 1
@@ -81,60 +95,49 @@ class Processador:
             ultima_hora = hora_atual
 
     def _analisar_status(self, batidas_dt: pd.Series) -> tuple[str, str]:
+        if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
+            batidas_dt = pd.to_datetime(batidas_dt, errors='coerce')
 
-        batidas = batidas_dt.astype(str)
-        dados = batidas.str.extract(r"\((\d+)\)\s*(\d+:\d+)")
-
-        if not dados.isnull().values.any():
-
-            batidas_dt = pd.to_datetime("2024-01-" + dados[0] + " " + dados[1])
-        else:
-            batidas_dt = pd.to_datetime(batidas, errors='coerce')
-
-
+        batidas_dt = batidas_dt.dropna()
         qtd = len(batidas_dt)
 
-        min_intervalo_horas = 50 / 60 # 50 minutos
-        max_intervalo_horas = 70 / 60 # 1 hora e 10 minutos
-
+        # Regra básica: Ímpar é erro
         if qtd % 2 != 0:
-            return "ERRO_IMPAR", "--:--"
-
+            return f"ERRO_IMPAR ({qtd})", "--:--"
 
         batidas_dt = batidas_dt.sort_values()
-
         entradas = batidas_dt.iloc[::2].reset_index(drop=True)
         saidas = batidas_dt.iloc[1::2].reset_index(drop=True)
 
         tempo_total = (saidas - entradas).sum()
-        duracao_horas = tempo_total.total_seconds() / 3600
-
-        total_segundos = (saidas - entradas).sum().total_seconds()
+        total_segundos = tempo_total.total_seconds()
+        duracao_horas = total_segundos / 3600
 
         horas_int = int(total_segundos // 3600)
-        restante_segundos = total_segundos % 3600
-        minutos_int = int(round(restante_segundos / 60))
+        minutos_int = int(round((total_segundos % 3600) / 60))
         duracao_str = f"{horas_int:02d}:{minutos_int:02d}"
 
-        # 2.REGRA DE NEGÓCIO
+        alertas = []
+        min_intervalo = 50 / 60
+        max_intervalo = 70 / 60
+
+        # Verifica Intervalo apenas se tiver 4 batidas (padrão)
         if qtd == 4:
-            saida = batidas_dt.iloc[1]
-            retorno = batidas_dt.iloc[2]
-            intervalo = (retorno - saida)
-            duracao_intervalo = intervalo.total_seconds() / 3600
+            saida_almoco = batidas_dt.iloc[1]
+            volta_almoco = batidas_dt.iloc[2]
+            intervalo = (volta_almoco - saida_almoco).total_seconds() / 3600
 
-            # Intervalo irregular
-            if duracao_intervalo < min_intervalo_horas or duracao_intervalo > max_intervalo_horas:
-                return "INTERVALO IRREGULAR", duracao_str
+            if intervalo < min_intervalo or intervalo > max_intervalo:
+                alertas.append("INTERVALO IRREGULAR")
 
+        if duracao_horas > 10: alertas.append("REVISAO_LONGA")
+        if duracao_horas < 4: alertas.append("JORNADA CURTA")
+        if qtd > 4: alertas.append("(EXTRA)")
 
-        # Jornada excessiva
-        if duracao_horas > 10:
-            return "REVISAO_LONGA", duracao_str
-
-        # Se passou por tudo, está OK
-        return "OK", duracao_str
-
+        if not alertas:
+            return "OK", duracao_str
+        else:
+            return " ".join(alertas), duracao_str
 
     def executar_analise(self, data_inicio_filtro=None, data_fim_filtro=None) -> list[ResultadoJornada]:
         self._preparar_timeline()
@@ -144,14 +147,20 @@ class Processador:
         grupos = self.df.groupby("ID_JORNADA")
 
         filtro_inicio = pd.to_datetime(data_inicio_filtro) if data_inicio_filtro else None
-        filtro_fim = pd.to_datetime(data_fim_filtro) if data_fim_filtro else None
+
+        # Filtro de Fim com +1 dia (para pegar o dia final completo)
+        if data_fim_filtro:
+            filtro_fim = pd.to_datetime(data_fim_filtro) + pd.Timedelta(days=1)
+        else:
+            filtro_fim = None
 
         for id_jornada, dados in grupos:
             batidas_dt = dados["DATETIME"]
             primeira_batida = batidas_dt.iloc[0]
 
+            # Filtros de Data
             if filtro_inicio and primeira_batida < filtro_inicio: continue
-            if filtro_fim and primeira_batida > filtro_fim: continue
+            if filtro_fim and primeira_batida >= filtro_fim: continue
 
             batidas_texto = []
             dia_ref = primeira_batida.day
@@ -163,9 +172,10 @@ class Processador:
 
             resultados.append(ResultadoJornada(
                 id_jornada=id_jornada,
+                # Chapa removida daqui
                 nome=dados["NOME"].iloc[0],
                 data_inicio_obj=primeira_batida,
-                data_inicio_str=primeira_batida.strftime("%d/%m/%Y"),
+                data_inicio_str=primeira_batida.strftime("%Y-%m-%d"),
                 batidas=batidas_texto,
                 status=status,
                 duracao=duracao

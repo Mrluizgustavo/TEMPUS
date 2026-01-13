@@ -4,73 +4,120 @@ from .processador import ResultadoJornada
 
 
 class ExcelReporter:
-    def gerar_relatorio_excel(self, resultados: list[ResultadoJornada], nome_arquivo: str = "Relatorio_Completo.xlsx"):
+    def _criar_dataframe(self, lista_resultados: list[ResultadoJornada]):
         """
-        Recebe os dados processados e gera um arquivo Excel real na pasta data/output.
+        Função auxiliar que transforma uma lista de resultados em um DataFrame formatado e limpo.
+        Aplica a mesma lógica de colunas e limpeza de regex para todas as abas.
         """
+        if not lista_resultados:
+            return pd.DataFrame()
 
-        # 1. Validação de Segurança
-        if not resultados:
-            print("⚠️ Nenhum dado para gerar relatório.")
-            return
+        # 1. Descobre o máximo de batidas desta lista específica
+        max_batidas = max((len(r.batidas) for r in lista_resultados), default=0)
 
-        print(f"Gerando Excel com {len(resultados)} jornadas...")
-
-        # 2. Descobre o número máximo de batidas para criar as colunas (Batida 1, 2, 3...)
-        # Se o recordista tiver 8 batidas, o Excel terá 8 colunas de batida.
-        max_batidas = max((len(r.batidas) for r in resultados), default=0)
-
-        # 3. Transforma a lista de Objetos em lista de Dicionários (formato do Pandas)
-        dados_para_dataframe = []
-
-        for r in resultados:
-            # Dados base da linha
+        dados = []
+        for r in lista_resultados:
             linha = {
                 "NOME": r.nome,
                 "DATA": r.data_inicio_str,
                 "STATUS": r.status,
                 "DURAÇÃO": r.duracao,
-                "QTD_BATIDAS": len(r.batidas)  # Coluna extra útil para filtro
+                "QTD_BATIDAS": len(r.batidas)
             }
-
-            # Preenchimento Dinâmico das Colunas Batidas
             for i, horario in enumerate(r.batidas):
-                coluna = f"BATIDA {i + 1}"
-                linha[coluna] = horario
+                linha[f"BATIDA {i + 1}"] = horario
 
-            dados_para_dataframe.append(linha)
+            dados.append(linha)
 
-        # 4. Cria o DataFrame
-        df = pd.DataFrame(dados_para_dataframe)
+        df = pd.DataFrame(dados)
 
-        # 5. Organização Visual das Colunas
+        # 2. Organização Visual das Colunas
         colunas_fixas = ["NOME", "DATA", "STATUS", "DURAÇÃO", "QTD_BATIDAS"]
         colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
-        # Garante que só vamos ordenar colunas que realmente existem no dataframe
+        # Garante a ordem correta das colunas
         ordem_final = colunas_fixas + colunas_batidas
 
-        # Reordena e preenche vazios com "" (estético)
+        # Reindexa para garantir a ordem e preenche vazios
+        # O reindex aceita apenas colunas que existem no df ou cria novas vazias
+        cols_existentes = [c for c in ordem_final if c in df.columns] + [c for c in df.columns if c not in ordem_final]
         df = df.reindex(columns=ordem_final).fillna("")
 
-        print("Limpando marcadores de dia (DD) para visualização...")
-
+        # 3. LIMPEZA DE MARCADORES DE DIA (Sua lógica original)
+        # Aplica o regex em todas as colunas de batida
         for col in colunas_batidas:
-            # Verifica se a coluna realmente existe (segurança para casos vazios)
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(r"\(\d+\)\s*", "", regex=True)
 
+        return df
 
-        # 6. Salva o Arquivo
+    def gerar_relatorio_excel(self, resultados: list[ResultadoJornada], nome_arquivo: str = "Relatorio.xlsx"):
+        """
+        Gera o Excel com múltiplas abas baseadas no Status.
+        """
+
+        # 1. Validação
+        if not resultados:
+            print("⚠️ Nenhum dado para gerar relatório.")
+            return
+
+        print(f"Classificando {len(resultados)} jornadas em abas...")
+
+        # 2. Separação por Status
+        lista_ok = []
+        lista_batidas_irregulares = []  # Ímpar, Qtd excessiva
+        lista_duracao_irregular = []  # Longa, Curta, Intervalo
+
+        for r in resultados:
+            status = r.status.upper()
+
+            # Lógica de Classificação
+            if "OK" in status:
+                lista_ok.append(r)
+
+            elif "IMPAR" in status or "QTD" in status:
+                lista_batidas_irregulares.append(r)
+
+            else:
+                # Cai aqui: REVISAO_LONGA, REVISAO_CURTA, INTERVALO IRREGULAR
+                lista_duracao_irregular.append(r)
+
+        # 3. Criação dos DataFrames usando a função auxiliar
+        df_geral = self._criar_dataframe(resultados)  # Aba Geral
+        df_batidas = self._criar_dataframe(lista_batidas_irregulares)
+        df_duracao = self._criar_dataframe(lista_duracao_irregular)
+        df_ok = self._criar_dataframe(lista_ok)
+
+        # 4. Gravação do Arquivo com Abas
         caminho_pasta = "data/output"
-        os.makedirs(caminho_pasta, exist_ok=True)  # Cria a pasta se não existir
-
+        os.makedirs(caminho_pasta, exist_ok=True)
         caminho_completo = os.path.join(caminho_pasta, nome_arquivo)
 
         try:
-            df.to_excel(caminho_completo, index=False)
+            with pd.ExcelWriter(caminho_completo, engine='openpyxl') as writer:
+
+                # Aba 1: Visão Geral (Tudo junto)
+                if not df_geral.empty:
+                    df_geral.to_excel(writer, sheet_name='VISÃO GERAL', index=False)
+
+                # Aba 2: Batidas Irregulares (Prioridade Alta)
+                if not df_batidas.empty:
+                    df_batidas.to_excel(writer, sheet_name='BATIDAS IRREGULARES', index=False)
+
+                # Aba 3: Duração/Intervalo
+                if not df_duracao.empty:
+                    df_duracao.to_excel(writer, sheet_name='DURAÇÃO IRREGULAR', index=False)
+
+                # Aba 4: Validadas
+                if not df_ok.empty:
+                    df_ok.to_excel(writer, sheet_name='VALIDADAS (OK)', index=False)
+
             print("=" * 60)
             print(f"✅ SUCESSO! Relatório salvo em: {caminho_completo}")
+            print(f"   - Batidas Irregulares: {len(lista_batidas_irregulares)}")
+            print(f"   - Duração Irregular:   {len(lista_duracao_irregular)}")
+            print(f"   - Validadas:           {len(lista_ok)}")
             print("=" * 60)
+
         except PermissionError:
             print(f"❌ ERRO: O arquivo '{nome_arquivo}' está aberto no Excel. Feche-o e tente novamente.")
