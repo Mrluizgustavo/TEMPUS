@@ -1,4 +1,5 @@
 import customtkinter as ctk
+import tkinter as tk  # Necessário para o PhotoImage
 from tkinter import filedialog, messagebox
 import threading
 import os
@@ -9,7 +10,7 @@ from src.loader import ExcelLoader
 from src.processador import Processador
 from src.reporter import ExcelReporter
 from src.database import BancoDeDados
-from src.view_dashboard import DashboardWindow  # Import do Dashboard
+from src.view_dashboard import DashboardWindow
 
 
 class AppPonto(ctk.CTk):
@@ -17,13 +18,37 @@ class AppPonto(ctk.CTk):
         super().__init__()
 
         # --- Configurações da Janela ---
-        self.title("Sistema de Ponto Inteligente v3.0")
-        self.geometry("800x650")  # Aumentei altura para caber tudo
+        self.title("Tempus - Time & Agility")
+        self.geometry("800x650")
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
-        self.arquivo_selecionado = None
+        # --- CONFIGURAÇÃO DO ÍCONE (Corrigido) ---
+        try:
+            # 1. Define o caminho exato
+            caminho_base = os.path.dirname(os.path.abspath(__file__))
+            caminho_icone = os.path.join(caminho_base, "IMG", "ICON.png")
 
+            # 2. Carrega a imagem salvando no SELF (Essencial!)
+            if os.path.exists(caminho_icone):
+                self.icone_img = tk.PhotoImage(file=caminho_icone)  # <--- O SEGREDO ESTÁ AQUI
+                self.iconphoto(False, self.icone_img)
+
+                # 3. Força o Windows a reconhecer o ícone na barra de tarefas
+                try:
+                    from ctypes import windll
+                    myappid = 'empresa.tempus.rh.1.0'
+                    windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+                except:
+                    pass
+            else:
+                print(f"⚠️ Aviso: Arquivo não encontrado em: {caminho_icone}")
+
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar ícone: {e}")
+
+        # --- Inicialização das Variáveis ---
+        self.arquivo_selecionado = None
         self._criar_elementos()
 
     def _criar_elementos(self):
@@ -49,7 +74,7 @@ class AppPonto(ctk.CTk):
         self.lbl_arquivo = ctk.CTkLabel(self.frame_arquivo, text="Nenhum arquivo selecionado", text_color="gray")
         self.lbl_arquivo.pack(side="left", padx=10)
 
-        # 4. Área de Filtro de Datas (AQUI ESTÁ ELE DE VOLTA!)
+        # 4. Área de Filtro de Datas
         self.frame_datas = ctk.CTkFrame(self)
         self.frame_datas.pack(pady=10, padx=20, fill="x")
 
@@ -85,10 +110,10 @@ class AppPonto(ctk.CTk):
         self.txt_log.pack(pady=5, padx=20, fill="x")
         self.log("Sistema pronto. Aguardando arquivo...")
 
-        # 7. Botão Abrir Pasta
+        # 7. Botão Abrir Pasta (Inicialmente oculto ou criado sob demanda, aqui deixei criado)
         self.btn_abrir_pasta = ctk.CTkButton(self, text="Abrir Pasta de Relatórios", command=self.abrir_pasta_saida,
                                              fg_color="green", hover_color="darkgreen")
-        # Fica oculto até terminar
+        # Ele só aparece no pack() quando finaliza sucesso
 
     def toggle_datas(self):
         """Ativa/Desativa inputs de data"""
@@ -182,11 +207,12 @@ class AppPonto(ctk.CTk):
         self.btn_abrir_pasta.pack(pady=10)
 
     def abrir_pasta_saida(self):
+        # Garante que cria a pasta se ela não existir
         caminho_pasta = os.path.abspath("data/output")
-        if os.path.exists(caminho_pasta):
-            os.startfile(caminho_pasta)
-        else:
-            messagebox.showwarning("Aviso", "A pasta de saída ainda não existe.")
+        if not os.path.exists(caminho_pasta):
+            os.makedirs(caminho_pasta)
+
+        os.startfile(caminho_pasta)
 
     def abrir_dashboard(self):
         banco = BancoDeDados()

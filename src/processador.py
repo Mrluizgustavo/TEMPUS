@@ -2,9 +2,6 @@ import pandas as pd
 from dataclasses import dataclass
 from datetime import datetime
 
-# CONFIGURAÇÃO DE SEGURANÇA
-LIMITE_CORTE_ABSOLUTO = 13  # Horas
-
 
 @dataclass
 class ResultadoJornada:
@@ -51,43 +48,75 @@ class Processador:
         batidas_na_jornada = 0
         ultimo_nome = ""
         ultima_hora = None
+        inicio_jornada_atual = None  # Guarda a hora da 1ª batida do dia atual
+
+        # CONFIGURAÇÕES DE REGRAS
+        LIMITE_GAP_ABSOLUTO = 14  # Se intervalo entre batidas > 15h, corta
+        LIMITE_DURACAO_TOTAL = 16  # Se (Agora - 1ª batida) > 20h, corta (evita dias grudados)
+        LIMITE_RETORNO_FOLGA = 4  # Se já fechei par (fui embora) e voltei depois de 5h, é novo dia
 
         for row in self.df.itertuples():
             idx = row.Index
             nome_atual = row.NOME
             hora_atual = row.DATETIME
 
-            # Mudou de pessoa? Nova Jornada.
+            # 1. Mudança de Pessoa
             if nome_atual != ultimo_nome:
                 id_atual += 1
                 batidas_na_jornada = 1
                 self.df.at[idx, "ID_JORNADA"] = id_atual
+
+                # Reseta controles
                 ultimo_nome = nome_atual
                 ultima_hora = hora_atual
+                inicio_jornada_atual = hora_atual
                 continue
 
-            # Cálculo de Gaps
-            diff_horas = 0
+            # Cálculos de Tempo
+            gap_horas = 0
+            duracao_acumulada = 0
+
             if ultima_hora:
-                diff_horas = (hora_atual - ultima_hora).total_seconds() / 3600
+                gap_horas = (hora_atual - ultima_hora).total_seconds() / 3600
+
+            if inicio_jornada_atual:
+                duracao_acumulada = (hora_atual - inicio_jornada_atual).total_seconds() / 3600
 
             nova_jornada = False
 
-            # Regras de Quebra de Jornada
-            if diff_horas > LIMITE_CORTE_ABSOLUTO:
-                nova_jornada = True
-            elif diff_horas < 4:
-                nova_jornada = False
-            else:
-                # Zona de ambiguidade (entre 4h e 13h)
-                if batidas_na_jornada % 2 == 0:
-                    nova_jornada = True  # Par fechado, nova jornada
-                else:
-                    nova_jornada = False  # Ímpar aberto, continuação (almoço longo)
+            # --- LÓGICA DE DECISÃO ---
 
+            # Se a jornada já dura mais de 20h desde o primeiro registro, corta.
+            if duracao_acumulada > LIMITE_DURACAO_TOTAL:
+                nova_jornada = True
+
+            # B. Gap Gigante entre batidas (Esqueceu de bater entrada do dia seguinte)
+            elif gap_horas > LIMITE_GAP_ABSOLUTO:
+                nova_jornada = True
+
+            # C. Análise de Contexto (Par vs Ímpar)
+            else:
+                # Se batidas PAR (Estou teoricamente "livre/fora")
+                if batidas_na_jornada % 2 == 0:
+                    # Se estou fora e volto depois de 5h, é outro dia.
+                    # Se volto antes de 5h, é apenas um intervalo de almoço/descanso.
+                    if gap_horas > LIMITE_RETORNO_FOLGA:
+                        nova_jornada = True
+                    else:
+                        nova_jornada = False
+
+                # Se batidas ÍMPAR (Estou "trabalhando/dentro")
+                else:
+                    # Se estou trabalhando, o gap conta como jornada contínua.
+                    # Como já passamos pelo filtro do LIMITE_GAP_ABSOLUTO (15h),
+                    # aqui aceitamos gaps de 12h, 13h (plantões longos).
+                    nova_jornada = False
+
+            # Aplica a decisão
             if nova_jornada:
                 id_atual += 1
                 batidas_na_jornada = 1
+                inicio_jornada_atual = hora_atual  # Nova referência de início
             else:
                 batidas_na_jornada += 1
 
