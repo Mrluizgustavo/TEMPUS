@@ -44,84 +44,89 @@ class Processador:
 
     def _segmentar_jornadas(self):
         self.df["ID_JORNADA"] = 0
-        id_atual = 1
-        batidas_na_jornada = 0
-        ultimo_nome = ""
-        ultima_hora = None
-        inicio_jornada_atual = None  # Guarda a hora da 1ª batida do dia atual
 
-        # CONFIGURAÇÕES DE REGRAS
-        LIMITE_GAP_ABSOLUTO = 14  # Se intervalo entre batidas > 15h, corta
-        LIMITE_DURACAO_TOTAL = 16  # Se (Agora - 1ª batida) > 20h, corta (evita dias grudados)
-        LIMITE_RETORNO_FOLGA = 4  # Se já fechei par (fui embora) e voltei depois de 5h, é novo dia
+        id_atual = 0
+        # Inicialização de variáveis de controle
+        ultimo_nome = None
+        ultima_hora = None
+        ultima_natureza = None  # 0 = ENTRADA, 1 = SAÍDA
+        inicio_jornada = None
+
+        # PARÂMETROS
+        MAX_GAP_HORAS = 12
+        MAX_DURACAO_JORNADA = 16
+        INICIO_NOTURNO = 21  # 21:00
+        FIM_NOTURNO = 6  # 06:00
 
         for row in self.df.itertuples():
             idx = row.Index
-            nome_atual = row.NOME
-            hora_atual = row.DATETIME
+            nome = row.NOME
+            hora = row.DATETIME
+            natureza = row.NATUREZA
 
-            # 1. Mudança de Pessoa
-            if nome_atual != ultimo_nome:
+            # ─────────────────────────────────────────────
+            # 1. TROCA DE COLABORADOR (Reset Obrigatório)
+            # ─────────────────────────────────────────────
+            if nome != ultimo_nome:
                 id_atual += 1
-                batidas_na_jornada = 1
                 self.df.at[idx, "ID_JORNADA"] = id_atual
 
-                # Reseta controles
-                ultimo_nome = nome_atual
-                ultima_hora = hora_atual
-                inicio_jornada_atual = hora_atual
+                # Reseta estado
+                ultimo_nome = nome
+                ultima_hora = hora
+                ultima_natureza = natureza
+                inicio_jornada = hora
                 continue
 
-            # Cálculos de Tempo
-            gap_horas = 0
-            duracao_acumulada = 0
-
-            if ultima_hora:
-                gap_horas = (hora_atual - ultima_hora).total_seconds() / 3600
-
-            if inicio_jornada_atual:
-                duracao_acumulada = (hora_atual - inicio_jornada_atual).total_seconds() / 3600
+            # ─────────────────────────────────────────────
+            # CÁLCULOS DE TEMPO
+            # ─────────────────────────────────────────────
+            gap_horas = (hora - ultima_hora).total_seconds() / 3600
+            duracao_total = (hora - inicio_jornada).total_seconds() / 3600
 
             nova_jornada = False
 
-            # --- LÓGICA DE DECISÃO ---
+            # ─────────────────────────────────────────────
+            # 2. VERIFICAÇÕES DE QUEBRA DE JORNADA
+            # ─────────────────────────────────────────────
 
-            # Se a jornada já dura mais de 20h desde o primeiro registro, corta.
-            if duracao_acumulada > LIMITE_DURACAO_TOTAL:
+            # A. Limites Absolutos (Segurança)
+            if gap_horas > MAX_GAP_HORAS or duracao_total > MAX_DURACAO_JORNADA:
                 nova_jornada = True
 
-            # B. Gap Gigante entre batidas (Esqueceu de bater entrada do dia seguinte)
-            elif gap_horas > LIMITE_GAP_ABSOLUTO:
-                nova_jornada = True
+            # B. Mudança de Data
+            elif hora.date() != ultima_hora.date():
+                # Se a data mudou, assume NOVA jornada por padrão.
+                # A única exceção é a continuidade de Turno Noturno.
 
-            # C. Análise de Contexto (Par vs Ímpar)
-            else:
-                # Se batidas PAR (Estou teoricamente "livre/fora")
-                if batidas_na_jornada % 2 == 0:
-                    # Se estou fora e volto depois de 5h, é outro dia.
-                    # Se volto antes de 5h, é apenas um intervalo de almoço/descanso.
-                    if gap_horas > LIMITE_RETORNO_FOLGA:
-                        nova_jornada = True
-                    else:
-                        nova_jornada = False
+                # Definição estrita de Turno Noturno Válido:
+                # 1. Ontem foi Entrada (0)
+                # 2. Hoje é Saída (1)
+                # 3. Horários compatíveis com noturno
+                eh_continuidade_noturna = (
+                        ultima_natureza == 0
+                        and natureza == 1
+                        and (ultima_hora.hour >= INICIO_NOTURNO or hora.hour <= FIM_NOTURNO)
+                )
 
-                # Se batidas ÍMPAR (Estou "trabalhando/dentro")
-                else:
-                    # Se estou trabalhando, o gap conta como jornada contínua.
-                    # Como já passamos pelo filtro do LIMITE_GAP_ABSOLUTO (15h),
-                    # aqui aceitamos gaps de 12h, 13h (plantões longos).
-                    nova_jornada = False
+                if not eh_continuidade_noturna:
+                    nova_jornada = True
+                    # Isso resolve seu bug:
+                    # Entrada (dia 1) -> Entrada (dia 2) cairá aqui e quebrará (nova_jornada=True)
+                    # Saída (dia 1) -> Entrada (dia 2) cairá aqui e quebrará (nova_jornada=True)
 
-            # Aplica a decisão
+            # ─────────────────────────────────────────────
+            # APLICA DECISÃO
+            # ─────────────────────────────────────────────
             if nova_jornada:
                 id_atual += 1
-                batidas_na_jornada = 1
-                inicio_jornada_atual = hora_atual  # Nova referência de início
-            else:
-                batidas_na_jornada += 1
+                inicio_jornada = hora
 
             self.df.at[idx, "ID_JORNADA"] = id_atual
-            ultima_hora = hora_atual
+
+            # Atualiza estado para próxima iteração
+            ultima_hora = hora
+            ultima_natureza = natureza
 
     def _analisar_status(self, batidas_dt: pd.Series) -> tuple[str, str]:
         if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
