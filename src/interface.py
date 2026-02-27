@@ -1,71 +1,134 @@
 import customtkinter as ctk
-import tkinter as tk  # Necessário para o PhotoImage
+import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 import os
 from datetime import datetime
 
-# Importando as suas classes
 from src.loader import ExcelLoader
 from src.processador import Processador
 from src.reporter import ExcelReporter
 from src.database import BancoDeDados
 from src.view_dashboard import DashboardWindow
 
-
 class AppPonto(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # --- Configurações da Janela ---
-        self.title("Tempus - Time & Agility")
-        self.geometry("800x650")
-        ctk.set_appearance_mode("Dark")
-        ctk.set_default_color_theme("blue")
+        self.bind("<Control-r>", lambda e: self.reiniciar())
 
-        # --- CONFIGURAÇÃO DO ÍCONE (Corrigido) ---
+        # 1. Defina o tamanho da janela que você quer
+        largura_janela = 1000
+        altura_janela = 900
+
+        # 2. Pegue a resolução do monitor do usuário
+        largura_tela = self.winfo_screenwidth()
+        altura_tela = self.winfo_screenheight()
+
+        # 3. Calcule a posição (X e Y)
+        # Para ficar na direita: Largura total da tela menos a largura da janela
+        pos_x = largura_tela - largura_janela
+        # Para centralizar na vertical: Metade da tela menos metade da janela
+        pos_y = (altura_tela // 2) - (altura_janela // 2)
+
+        # 4. Aplica a geometria: "LarguraxAltura+X+Y"
+        self.geometry(f"{largura_janela}x{altura_janela}+{pos_x}+{pos_y}")
+
+        self.title("Tempus - Time & Agility")
+        ctk.set_appearance_mode("Dark")
+
+        # --- Configuração de Grid Principal ---
+        # Coluna 0: Sidebar (fixa) | Coluna 1: Conteúdo (expansível)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        # --- Sidebar ---
+        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+        self.sidebar_frame.grid_rowconfigure(4, weight=1)  # Espaçador inferior
+
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="TEMPUS", font=ctk.CTkFont(size=20, weight="bold"))
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+
+        self.btn_nav_home = ctk.CTkButton(self.sidebar_frame, text="Processar Ponto",
+                                          command=lambda: self.show_frame("Home"))
+        self.btn_nav_home.grid(row=1, column=0, padx=20, pady=10)
+
+        self.btn_nav_dash = ctk.CTkButton(self.sidebar_frame, text="Dashboard",
+                                          fg_color="#8A2BE2", hover_color="#4B0082",
+                                          command=self.abrir_dashboard)
+        self.btn_nav_dash.grid(row=2, column=0, padx=20, pady=10)
+
+        # --- Container de Conteúdo ---
+        self.container = ctk.CTkFrame(self, fg_color="transparent")
+        self.container.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
+        self.container.grid_columnconfigure(0, weight=1)
+        self.container.grid_rowconfigure(0, weight=1)
+
+        # Dicionário de frames
+        self.frames = {}
+
+        # Instanciando a tela principal (seu código original vai aqui dentro)
+        self.frames["Home"] = HomeFrame(parent=self.container, controller=self)
+        self.frames["Home"].grid(row=0, column=0, sticky="nsew")
+
+        self.show_frame("Home")
+        self._configurar_icone()
+
+    def reiniciar(self, event=None):
+        self.destroy()
+        import os
+        import sys
+        os.startfile(sys.argv[0])
+
+    def _configurar_icone(self):
         try:
-            # 1. Define o caminho exato
             caminho_base = os.path.dirname(os.path.abspath(__file__))
             caminho_icone = os.path.join(caminho_base, "IMG", "ICON.png")
-
-            # 2. Carrega a imagem salvando no SELF (Essencial!)
             if os.path.exists(caminho_icone):
-                self.icone_img = tk.PhotoImage(file=caminho_icone)  # <--- O SEGREDO ESTÁ AQUI
+                self.icone_img = tk.PhotoImage(file=caminho_icone)
                 self.iconphoto(False, self.icone_img)
+        except:
+            pass
 
-                # 3. Força o Windows a reconhecer o ícone na barra de tarefas
-                try:
-                    from ctypes import windll
-                    myappid = 'empresa.tempus.rh.1.0'
-                    windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-                except:
-                    pass
-            else:
-                print(f"⚠️ Aviso: Arquivo não encontrado em: {caminho_icone}")
+    def show_frame(self, page_name):
+        frame = self.frames[page_name]
+        frame.tkraise()
 
-        except Exception as e:
-            print(f"⚠️ Erro ao carregar ícone: {e}")
+    def abrir_dashboard(self):
 
-        # --- Inicialização das Variáveis ---
+        banco = BancoDeDados()
+        dados = banco.obter_kpis_dashboard()
+
+        if not dados:
+            messagebox.showwarning("Vazio", "Processe algum arquivo primeiro para alimentar o banco de dados!")
+            return
+
+        if "Dashboard" in self.frames:
+            self.frames["Dashboard"].destroy()
+
+            # 2. Criamos o Dashboard como um Frame dentro do container principal
+            # Note que passamos 'dados' para ele
+        self.frames["Dashboard"] = DashboardWindow(parent=self.container, controller=self, dados=dados)
+        self.frames["Dashboard"].grid(row=0, column=0, sticky="nsew")
+
+        # 3. Alternamos a visualização
+        self.show_frame("Dashboard")
+
+
+class HomeFrame(ctk.CTkFrame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, fg_color="transparent")
+        self.controller = controller
         self.arquivo_selecionado = None
-        self._criar_elementos()
 
-    def _criar_elementos(self):
         # 1. Título
         self.lbl_titulo = ctk.CTkLabel(self, text="Tratamento de Ponto Eletrônico", font=("Roboto", 24, "bold"))
-        self.lbl_titulo.pack(pady=(20, 10))
+        self.lbl_titulo.pack(pady=(10, 20))
 
-        # 2. Botão Dashboard (Destaque)
-        self.btn_dash = ctk.CTkButton(self, text="📊 ABRIR DASHBOARD DE GESTÃO",
-                                      command=self.abrir_dashboard,
-                                      fg_color="#8A2BE2", hover_color="#4B0082",
-                                      height=40, font=("Roboto", 14, "bold"))
-        self.btn_dash.pack(pady=(0, 20))
-
-        # 3. Área de Seleção de Arquivo
+        # 2. Área de Seleção de Arquivo
         self.frame_arquivo = ctk.CTkFrame(self)
-        self.frame_arquivo.pack(pady=5, padx=20, fill="x")
+        self.frame_arquivo.pack(pady=5, fill="x")
 
         self.btn_selecionar = ctk.CTkButton(self.frame_arquivo, text="Selecionar Excel (.xlsx)",
                                             command=self.selecionar_arquivo)
@@ -74,9 +137,9 @@ class AppPonto(ctk.CTk):
         self.lbl_arquivo = ctk.CTkLabel(self.frame_arquivo, text="Nenhum arquivo selecionado", text_color="gray")
         self.lbl_arquivo.pack(side="left", padx=10)
 
-        # 4. Área de Filtro de Datas
+        # 3. Área de Filtro de Datas
         self.frame_datas = ctk.CTkFrame(self)
-        self.frame_datas.pack(pady=10, padx=20, fill="x")
+        self.frame_datas.pack(pady=10, fill="x")
 
         self.chk_usar_filtro = ctk.CTkCheckBox(self.frame_datas, text="Filtrar por Período Específico",
                                                command=self.toggle_datas)
@@ -85,48 +148,32 @@ class AppPonto(ctk.CTk):
         self.subframe_inputs = ctk.CTkFrame(self.frame_datas, fg_color="transparent")
         self.subframe_inputs.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.lbl_inicio = ctk.CTkLabel(self.subframe_inputs, text="Data Início:")
-        self.lbl_inicio.pack(side="left", padx=(0, 5))
+        self.entry_inicio = ctk.CTkEntry(self.subframe_inputs, placeholder_text="DD/MM/AAAA", width=120)
+        self.entry_inicio.pack(side="left", padx=5)
 
-        self.entry_inicio = ctk.CTkEntry(self.subframe_inputs, placeholder_text="DD/MM/AAAA", width=100)
-        self.entry_inicio.pack(side="left", padx=(0, 20))
+        self.entry_fim = ctk.CTkEntry(self.subframe_inputs, placeholder_text="DD/MM/AAAA", width=120)
+        self.entry_fim.pack(side="left", padx=5)
 
-        self.lbl_fim = ctk.CTkLabel(self.subframe_inputs, text="Data Fim:")
-        self.lbl_fim.pack(side="left", padx=(0, 5))
+        #BOTÃO PROCESSAR
+        self.btn_processar = ctk.CTkButton(self, text="PROCESSAR RELATÓRIO",
+                                           command=self.iniciar_processamento,
+                                           state="disabled", height=50)
+        self.btn_processar.pack(pady=20, fill="x")
 
-        self.entry_fim = ctk.CTkEntry(self.subframe_inputs, placeholder_text="DD/MM/AAAA", width=100)
-        self.entry_fim.pack(side="left")
-
-        # Inicia desativado
-        self.toggle_datas()
-
-        # 5. Botão de Processar
-        self.btn_processar = ctk.CTkButton(self, text="PROCESSAR RELATÓRIO", command=self.iniciar_processamento,
-                                           state="disabled", height=50, font=("Roboto", 16))
-        self.btn_processar.pack(pady=20, padx=50, fill="x")
-
-        # 6. Log
-        self.txt_log = ctk.CTkTextbox(self, height=120)
-        self.txt_log.pack(pady=5, padx=20, fill="x")
-        self.log("Sistema pronto. Aguardando arquivo...")
-
-        # 7. Botão Abrir Pasta (Inicialmente oculto ou criado sob demanda, aqui deixei criado)
+        #BOTÃO ABRIR PASTA
         self.btn_abrir_pasta = ctk.CTkButton(self, text="Abrir Pasta de Relatórios", command=self.abrir_pasta_saida,
                                              fg_color="green", hover_color="darkgreen")
-        # Ele só aparece no pack() quando finaliza sucesso
+
+        #LOG
+        self.txt_log = ctk.CTkTextbox(self, height=200)
+        self.txt_log.pack(pady=5, fill="x")
+        self.toggle_datas()
+
 
     def toggle_datas(self):
-        """Ativa/Desativa inputs de data"""
-        if self.chk_usar_filtro.get() == 1:
-            self.entry_inicio.configure(state="normal", text_color="white")
-            self.entry_fim.configure(state="normal", text_color="white")
-        else:
-            self.entry_inicio.configure(state="disabled", text_color="gray")
-            self.entry_fim.configure(state="disabled", text_color="gray")
-
-    def log(self, mensagem):
-        self.txt_log.insert("end", f"> {mensagem}\n")
-        self.txt_log.see("end")
+        state = "normal" if self.chk_usar_filtro.get() == 1 else "disabled"
+        self.entry_inicio.configure(state=state)
+        self.entry_fim.configure(state=state)
 
     def selecionar_arquivo(self):
         caminho = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx")])
@@ -134,14 +181,6 @@ class AppPonto(ctk.CTk):
             self.arquivo_selecionado = caminho
             self.lbl_arquivo.configure(text=f"Selecionado: {os.path.basename(caminho)}", text_color="white")
             self.btn_processar.configure(state="normal")
-            self.log(f"Arquivo carregado.")
-
-    def converter_data_br_para_iso(self, data_br):
-        try:
-            obj_data = datetime.strptime(data_br, "%d/%m/%Y")
-            return obj_data.strftime("%Y-%m-%d")
-        except ValueError:
-            return None
 
     def iniciar_processamento(self):
         data_ini_iso = None
@@ -214,16 +253,26 @@ class AppPonto(ctk.CTk):
 
         os.startfile(caminho_pasta)
 
-    def abrir_dashboard(self):
-        banco = BancoDeDados()
-        dados = banco.obter_kpis_dashboard()
+    def log(self, mensagem):
+        """Escreve no log de forma segura para threads"""
+        self.after(0, self._atualizar_log_ui, mensagem)
 
-        if not dados:
-            messagebox.showwarning("Vazio", "Processe algum arquivo primeiro para alimentar o banco de dados!")
-            return
+    def _atualizar_log_ui(self, mensagem):
+        self.txt_log.insert("end", f"> {mensagem}\n")
+        self.txt_log.see("end")
 
-        dash = DashboardWindow(dados)
-        dash.grab_set()
+    def converter_data_br_para_iso(self, data_br):
+        """Converte DD/MM/AAAA para YYYY-MM-DD"""
+        try:
+            obj_data = datetime.strptime(data_br, "%d/%m/%Y")
+            return obj_data.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    def finalizar_sucesso(self):
+        """Atualiza a UI após o fim do processamento"""
+        self.after(0, lambda: self.btn_processar.configure(state="normal", text="PROCESSAR NOVAMENTE"))
+        self.after(0, lambda: self.btn_abrir_pasta.pack(pady=10))
 
 
 if __name__ == "__main__":

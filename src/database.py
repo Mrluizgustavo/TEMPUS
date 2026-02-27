@@ -29,21 +29,16 @@ class BancoDeDados:
                 dia_semana TEXT,
 
                 status TEXT,
-                duracao_decimal REAL,
-                qtd_batidas INTEGER,
                 tem_erro BOOLEAN,
 
-                -- CORREÇÃO AQUI: Usando nomes por extenso para bater com o INSERT
-                entrada_1 TEXT,
-                saida_1 TEXT,
-                entrada_2 TEXT,
-                saida_2 TEXT,
-
-                batidas_extra_log TEXT, 
-
+                horas_trabalhadas REAL,
+                tempo_intervalo REAL,
+                
+                log_batidas_originais TEXT,
+                
                 data_processamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-                UNIQUE(nome, data_inicio) ON CONFLICT REPLACE
+                UNIQUE(chapa, data_inicio) ON CONFLICT REPLACE
             )
         """)
 

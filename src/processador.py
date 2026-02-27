@@ -26,17 +26,17 @@ class Processador:
 
         self.df.dropna(subset=["DATETIME"], inplace=True)
 
-        # ORDENAÇÃO POR NOME (Essencial para agrupar as batidas da mesma pessoa)
+        # ORDENAÇÃO POR NOME
         self.df.sort_values(by=["NOME", "DATETIME"], inplace=True)
 
         self._remover_duplicatas()
         self.df.reset_index(drop=True, inplace=True)
 
     def _remover_duplicatas(self):
-        # Verifica se é a mesma pessoa (NOME) e se o tempo é curto (< 3 min)
+        # Verifica se é a mesma pessoa e se o tempo é curto
         mesma_pessoa = self.df["NOME"] == self.df["NOME"].shift(1)
         diff_tempo = self.df["DATETIME"].diff()
-        tolerancia = pd.Timedelta(minutes=3)
+        tolerancia = pd.Timedelta(minutes=5)
         mascara_duplicadas = mesma_pessoa & (diff_tempo < tolerancia)
 
         if mascara_duplicadas.sum() > 0:
@@ -46,7 +46,7 @@ class Processador:
         self.df["ID_JORNADA"] = 0
 
         id_atual = 0
-        # Inicialização de variáveis de controle
+
         ultimo_nome = None
         ultima_hora = None
         ultima_natureza = None  # 0 = ENTRADA, 1 = SAÍDA
@@ -65,7 +65,7 @@ class Processador:
             natureza = row.NATUREZA
 
             # ─────────────────────────────────────────────
-            # 1. TROCA DE COLABORADOR (Reset Obrigatório)
+            # 1. TROCA DE COLABORADOR
             # ─────────────────────────────────────────────
             if nome != ultimo_nome:
                 id_atual += 1
@@ -96,8 +96,6 @@ class Processador:
 
             # B. Mudança de Data
             elif hora.date() != ultima_hora.date():
-                # Se a data mudou, assume NOVA jornada por padrão.
-                # A única exceção é a continuidade de Turno Noturno.
 
                 # Definição estrita de Turno Noturno Válido:
                 # 1. Ontem foi Entrada (0)
@@ -105,15 +103,12 @@ class Processador:
                 # 3. Horários compatíveis com noturno
                 eh_continuidade_noturna = (
                         ultima_natureza == 0
-                        and natureza == 1
                         and (ultima_hora.hour >= INICIO_NOTURNO or hora.hour <= FIM_NOTURNO)
                 )
 
                 if not eh_continuidade_noturna:
                     nova_jornada = True
-                    # Isso resolve seu bug:
-                    # Entrada (dia 1) -> Entrada (dia 2) cairá aqui e quebrará (nova_jornada=True)
-                    # Saída (dia 1) -> Entrada (dia 2) cairá aqui e quebrará (nova_jornada=True)
+
 
             # ─────────────────────────────────────────────
             # APLICA DECISÃO
@@ -137,12 +132,13 @@ class Processador:
 
         # Regra básica: Ímpar é erro
         if qtd % 2 != 0:
-            return f"ERRO_IMPAR ({qtd})", "--:--"
+            return f"FALTA_DE_MARCAÇÃO ({qtd})", "--:--"
 
         batidas_dt = batidas_dt.sort_values()
         entradas = batidas_dt.iloc[::2].reset_index(drop=True)
         saidas = batidas_dt.iloc[1::2].reset_index(drop=True)
 
+        #CALCULA A JORNADA TRABALHADA
         tempo_total = (saidas - entradas).sum()
         total_segundos = tempo_total.total_seconds()
         duracao_horas = total_segundos / 3600
@@ -151,6 +147,7 @@ class Processador:
         minutos_int = int(round((total_segundos % 3600) / 60))
         duracao_str = f"{horas_int:02d}:{minutos_int:02d}"
 
+        #ARMAZENA AS IRREGULARIDADES
         alertas = []
         min_intervalo = 50 / 60
         max_intervalo = 70 / 60
@@ -161,12 +158,18 @@ class Processador:
             volta_almoco = batidas_dt.iloc[2]
             intervalo = (volta_almoco - saida_almoco).total_seconds() / 3600
 
-            if intervalo < min_intervalo or intervalo > max_intervalo:
-                alertas.append("INTERVALO IRREGULAR")
+            # INTERVALO MENOR QUE 50 MIN
+            if intervalo < min_intervalo:
+                alertas.append("INTERVALO_CURTO")
 
-        if duracao_horas > 10: alertas.append("REVISAO_LONGA")
-        if duracao_horas < 4: alertas.append("JORNADA CURTA")
-        if qtd > 4: alertas.append("(EXTRA)")
+            # INTERVALO MAOIR QUE 01:10 HORAS
+            if intervalo > max_intervalo:
+                alertas.append("INTERVALO_MAIOR")
+
+        # JORNADA ACIMA DE 10 HORAS
+        if duracao_horas > 10: alertas.append("JORNADA_LONGA")
+        # JORNADA MENOR QUE 4 HORAS
+        if duracao_horas < 4: alertas.append("JORNADA_CURTA")
 
         if not alertas:
             return "OK", duracao_str
@@ -206,7 +209,6 @@ class Processador:
 
             resultados.append(ResultadoJornada(
                 id_jornada=id_jornada,
-                # Chapa removida daqui
                 nome=dados["NOME"].iloc[0],
                 data_inicio_obj=primeira_batida,
                 data_inicio_str=primeira_batida.strftime("%Y-%m-%d"),

@@ -5,14 +5,11 @@ from .processador import ResultadoJornada
 
 class ExcelReporter:
     def _criar_dataframe(self, lista_resultados: list[ResultadoJornada]):
-        """
-        Função auxiliar que transforma uma lista de resultados em um DataFrame formatado e limpo.
-        Aplica a mesma lógica de colunas e limpeza de regex para todas as abas.
-        """
+
         if not lista_resultados:
             return pd.DataFrame()
 
-        # 1. Descobre o máximo de batidas desta lista específica
+        # Descobre o máximo de batidas desta lista específica
         max_batidas = max((len(r.batidas) for r in lista_resultados), default=0)
 
         dados = []
@@ -31,19 +28,17 @@ class ExcelReporter:
 
         df = pd.DataFrame(dados)
 
-        # 2. Organização Visual das Colunas
+        # Organização Visual das Colunas
         colunas_fixas = ["NOME", "DATA", "STATUS", "DURAÇÃO", "QTD_BATIDAS"]
         colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
         # Garante a ordem correta das colunas
         ordem_final = colunas_fixas + colunas_batidas
 
-        # Reindexa para garantir a ordem e preenche vazios
-        # O reindex aceita apenas colunas que existem no df ou cria novas vazias
-        cols_existentes = [c for c in ordem_final if c in df.columns] + [c for c in df.columns if c not in ordem_final]
+
         df = df.reindex(columns=ordem_final).fillna("")
 
-        # 3. LIMPEZA DE MARCADORES DE DIA (Sua lógica original)
+        # LIMPEZA DE MARCADORES DE DIA
         # Aplica o regex em todas as colunas de batida
         for col in colunas_batidas:
             if col in df.columns:
@@ -55,7 +50,6 @@ class ExcelReporter:
         """
         Gera o Excel com múltiplas abas baseadas no Status.
         """
-
         # 1. Validação
         if not resultados:
             print("⚠️ Nenhum dado para gerar relatório.")
@@ -102,7 +96,7 @@ class ExcelReporter:
 
                 # Aba 2: Batidas Irregulares (Prioridade Alta)
                 if not df_batidas.empty:
-                    df_batidas.to_excel(writer, sheet_name='BATIDAS IRREGULARES', index=False)
+                    df_batidas.to_excel(writer, sheet_name='FALTAS DE MARCAÇÃO', index=False)
 
                 # Aba 3: Duração/Intervalo
                 if not df_duracao.empty:
@@ -110,11 +104,11 @@ class ExcelReporter:
 
                 # Aba 4: Validadas
                 if not df_ok.empty:
-                    df_ok.to_excel(writer, sheet_name='VALIDADAS (OK)', index=False)
+                    df_ok.to_excel(writer, sheet_name='OK', index=False)
 
             print("=" * 60)
             print(f"✅ SUCESSO! Relatório salvo em: {caminho_completo}")
-            print(f"   - Batidas Irregulares: {len(lista_batidas_irregulares)}")
+            print(f"   - Faltas de Marcação: {len(lista_batidas_irregulares)}")
             print(f"   - Duração Irregular:   {len(lista_duracao_irregular)}")
             print(f"   - Validadas:           {len(lista_ok)}")
             print("=" * 60)
