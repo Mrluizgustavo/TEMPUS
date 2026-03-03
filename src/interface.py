@@ -98,7 +98,7 @@ class AppPonto(ctk.CTk):
     def abrir_dashboard(self):
 
         banco = BancoDeDados()
-        dados = banco.obter_kpis_dashboard()
+        dados = banco.obter_dados_dashboard()
 
         if not dados:
             messagebox.showwarning("Vazio", "Processe algum arquivo primeiro para alimentar o banco de dados!")

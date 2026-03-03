@@ -1,8 +1,10 @@
 import sqlite3
 import os
-import pandas as pd
 from datetime import datetime
-from .processador import ResultadoJornada
+
+import pandas as pd
+
+from src.processador import ResultadoJornada
 
 
 class BancoDeDados:
@@ -18,32 +20,40 @@ class BancoDeDados:
         conn = self._conectar()
         cursor = conn.cursor()
 
-        # ESTRUTURA BLINDADA (Wide Table)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS jornadas_analiticas (
+            CREATE TABLE IF NOT EXISTS jornadas(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
 
                 nome TEXT,
                 chapa TEXT,
-                data_inicio DATE,
+                data DATE,
                 dia_semana TEXT,
-
-                status TEXT,
-                tem_erro BOOLEAN,
-
+                qtd_batidas INTEGER,
                 horas_trabalhadas REAL,
                 tempo_intervalo REAL,
                 
-                log_batidas_originais TEXT,
-                
                 data_processamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-                UNIQUE(chapa, data_inicio) ON CONFLICT REPLACE
+                UNIQUE(chapa, data)
             )
         """)
 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_data ON jornadas_analiticas(data_inicio)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nome ON jornadas_analiticas(nome)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS status_jornada(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                
+                id_jornada INTEGER NOT NULL,
+                tipo_status TEXT NOT NULL,
+                FOREIGN KEY (id_jornada) REFERENCES jornadas(id) ON DELETE CASCADE                
+                
+                )
+            """)
+
+
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_data ON jornadas(data)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nome ON jornadas(nome)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_status_composto ON status_jornada(tipo_status, id_jornada)")
 
         conn.commit()
         conn.close()
@@ -52,74 +62,148 @@ class BancoDeDados:
         conn = self._conectar()
         cursor = conn.cursor()
 
+        #ATIVA A FOREIGN KEY
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
         print(f"Salvando {len(resultados)} registros no histórico...")
 
         for r in resultados:
-            # 1. Preparação
-            tem_erro = 1 if "OK" not in r.status.upper() else 0
 
+            #formata a duração para decimal
             try:
                 h, m = map(int, r.duracao.split(':'))
                 duracao_decimal = h + (m / 60)
             except:
                 duracao_decimal = 0.0
 
-            # 2. Separação das Batidas
-            e1, s1, e2, s2 = None, None, None, None
-            log_extra = None
-
-            qtd = len(r.batidas)
-
-            if qtd >= 1: e1 = r.batidas[0]
-            if qtd >= 2: s1 = r.batidas[1]
-            if qtd >= 3: e2 = r.batidas[2]
-            if qtd >= 4: s2 = r.batidas[3]
-
-            if qtd > 4 or tem_erro:
-                log_extra = ", ".join(r.batidas)
-
-            try:
-                dia_sem = pd.to_datetime(r.data_inicio_str).day_name()
-            except:
-                dia_sem = ""
-
             chapa_valor = getattr(r, 'chapa', None)
 
-            # 3. INSERT (Agora os nomes batem com o CREATE acima)
+
+            data_obj = datetime.strptime(r.data_inicio_str, "%Y-%m-%d")
+            dia_semana = data_obj.strftime("%A")
+
+
+
+            # INSERT
             cursor.execute("""
-                INSERT INTO jornadas_analiticas 
-                (nome, chapa, data_inicio, dia_semana, status, duracao_decimal, qtd_batidas, tem_erro,
-                 entrada_1, saida_1, entrada_2, saida_2, batidas_extra_log)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO jornadas
+                (nome, chapa, data, dia_semana, qtd_batidas, horas_trabalhadas,
+                 tempo_intervalo)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chapa, data) DO UPDATE SET
+                    nome = excluded.nome,
+                    dia_semana = excluded.dia_semana,
+                    qtd_batidas = excluded.qtd_batidas,
+                    horas_trabalhadas = excluded.horas_trabalhadas,
+                    tempo_intervalo = excluded.tempo_intervalo,
+                    data_processamento = CURRENT_TIMESTAMP
+                RETURNING id
             """, (
-                r.nome, chapa_valor, r.data_inicio_str, dia_sem, r.status, duracao_decimal, qtd, tem_erro,
-                e1, s1, e2, s2, log_extra
+                r.nome, chapa_valor, r.data_inicio_str,
+                dia_semana, len(r.batidas),
+                duracao_decimal,r.intervalo
             ))
+
+            id_jornada = cursor.fetchone()[0]
+
+            cursor.execute("""DELETE FROM status_jornada WHERE id_jornada = ?""", (id_jornada,))
+
+            for status in r.status:
+                cursor.execute("""
+                                INSERT INTO status_jornada
+                                (id_jornada, tipo_status)
+                                VALUES (?, ?)
+                            """, (
+                    id_jornada, status
+                ))
 
         conn.commit()
         conn.close()
         print("✅ Dados salvos com sucesso!")
 
-    def obter_kpis_dashboard(self):
+    def obter_dados_dashboard(self):
+
         conn = self._conectar()
-        # Busca apenas as colunas necessárias
-        query = "SELECT status, nome FROM jornadas_analiticas"
 
         try:
-            df = pd.read_sql_query(query, conn)
-        except:
+            dados = {
+                "intervalos": self.obter_dados_intervalos(conn),
+                "faltas": self.obter_dados_faltas(conn),
+            }
+            return dados
+        finally:
             conn.close()
-            return None
 
-        conn.close()
 
-        if df.empty:
-            return None
 
-        df["tipo"] = df["status"].apply(lambda x: "OK" if "OK" in str(x).upper() else "Irregular")
+    def obter_dados_intervalos(self, conn):
+        query = """
+            SELECT 
+                j.id,
+                j.nome,
+                s.tipo_status
+            FROM jornadas j
+            INNER JOIN status_jornada s
+                ON s.id_jornada = j.id
+            WHERE s.tipo_status IN ('INTERVALO_CURTO', 'INTERVALO_LONGO')
+        """
+
+        df = pd.read_sql_query(query, conn)
+
+        if df.empty:return None
+
+
+        # -------- KPI --------
+        total_jornadas_afetadas = df["id"].nunique()
+
+        # -------- Gráfico de tipos --------
+        tipos_counts = df["tipo_status"].value_counts()
+
+        # -------- Top 5 colaboradores com mais problemas de intervalo --------
+        top5_colaboradores = (
+            df["nome"]
+            .value_counts()
+            .head(5)
+        )
 
         return {
-            "total": len(df),
-            "status_pie": df["tipo"].value_counts().to_dict(),
-            "top_5_erros": df[df["tipo"] == "Irregular"]["nome"].value_counts().head(5).to_dict()
+            "total_intervalos_irregulares": total_jornadas_afetadas,
+
+            # Gráfico de barras (curto x longo)
+            "labels": tipos_counts.index.tolist(),
+            "values": tipos_counts.values.tolist(),
+
+            # Top 5 colaboradores
+            "top5_labels": top5_colaboradores.index.tolist(),
+            "top5_values": top5_colaboradores.values.tolist()
         }
+
+
+
+    def obter_dados_faltas(self, conn):
+
+        query = """
+            SELECT 
+                j.id,
+                j.nome,
+                s.tipo_status
+            FROM jornadas j
+            INNER JOIN status_jornada s ON s.id_jornada = j.id
+            WHERE s.tipo_status LIKE 'FALTA_DE_MARCAÇÃO%'
+        """
+
+
+        df = pd.read_sql_query(query, conn)
+
+        if df.empty:return None
+
+        # Contagem de tipos (ex: quantas faltas com 1 batida, quantas com 3...)
+        contagem_tipos = df["tipo_status"].value_counts()
+
+        return {
+            "labels": contagem_tipos.index.tolist(),
+            "values": contagem_tipos.values.tolist(),
+            "total_faltas": len(df)
+        }
+

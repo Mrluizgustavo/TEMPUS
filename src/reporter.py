@@ -4,23 +4,36 @@ from .processador import ResultadoJornada
 
 
 class ExcelReporter:
-    def _criar_dataframe(self, lista_resultados: list[ResultadoJornada]):
+    def _criar_dataframe(self, lista_resultados: list[ResultadoJornada], categoria=None):
 
         if not lista_resultados:
             return pd.DataFrame()
 
-        # Descobre o máximo de batidas desta lista específica
         max_batidas = max((len(r.batidas) for r in lista_resultados), default=0)
 
         dados = []
+
         for r in lista_resultados:
+
+            # 🔎 Se for aba específica, filtra os status
+            if categoria:
+                status_filtrado = [
+                    s for s in r.status
+                    if self.mapa_categorias.get(s.upper()) == categoria
+                ]
+                status_exibicao = " | ".join(status_filtrado)
+            else:
+                # Aba geral → mostra tudo
+                status_exibicao = " | ".join(r.status)
+
             linha = {
                 "NOME": r.nome,
                 "DATA": r.data_inicio_str,
-                "STATUS": r.status,
+                "STATUS": status_exibicao,
                 "DURAÇÃO": r.duracao,
                 "QTD_BATIDAS": len(r.batidas)
             }
+
             for i, horario in enumerate(r.batidas):
                 linha[f"BATIDA {i + 1}"] = horario
 
@@ -28,18 +41,12 @@ class ExcelReporter:
 
         df = pd.DataFrame(dados)
 
-        # Organização Visual das Colunas
         colunas_fixas = ["NOME", "DATA", "STATUS", "DURAÇÃO", "QTD_BATIDAS"]
         colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
-        # Garante a ordem correta das colunas
         ordem_final = colunas_fixas + colunas_batidas
-
-
         df = df.reindex(columns=ordem_final).fillna("")
 
-        # LIMPEZA DE MARCADORES DE DIA
-        # Aplica o regex em todas as colunas de batida
         for col in colunas_batidas:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(r"\(\d+\)\s*", "", regex=True)
@@ -57,30 +64,66 @@ class ExcelReporter:
 
         print(f"Classificando {len(resultados)} jornadas em abas...")
 
-        # 2. Separação por Status
-        lista_ok = []
-        lista_batidas_irregulares = []  # Ímpar, Qtd excessiva
-        lista_duracao_irregular = []  # Longa, Curta, Intervalo
+        self.mapa_categorias = {
+            "OK": "OK",
+            "EXTRA": "EXTRA",
+
+            "FALTA_DE_MARCAÇÃO": "FALTA_DE_MARCAÇÃO",
+
+            "INTERVALO_CURTO": "INTERVALOS_IRREGULARES",
+            "INTERVALO_LONGO": "INTERVALOS_IRREGULARES",
+
+            "JORNADA_LONGA": "JORNADAS_IRREGULARES",
+            "JORNADA_CURTA": "JORNADAS_IRREGULARES",
+            "JORNADA_LONGA_SEM_INTERVALO": "JORNADAS_IRREGULARES"
+        }
+
+        abas = {
+            "OK": [],
+            "EXTRA": [],
+            "FALTA_DE_MARCAÇÃO": [],
+            "INTERVALOS_IRREGULARES": [],
+            "JORNADAS_IRREGULARES": []
+        }
 
         for r in resultados:
-            status = r.status.upper()
+            status_list = [s.upper() for s in r.status]
 
-            # Lógica de Classificação
-            if "OK" in status:
-                lista_ok.append(r)
+            categorias_adicionadas = set()
 
-            elif "IMPAR" in status or "QTD" in status:
-                lista_batidas_irregulares.append(r)
+            for status in status_list:
+                categoria = self.mapa_categorias.get(status)
 
-            else:
-                # Cai aqui: REVISAO_LONGA, REVISAO_CURTA, INTERVALO IRREGULAR
-                lista_duracao_irregular.append(r)
+                if categoria and categoria not in categorias_adicionadas:
+                    abas[categoria].append(r)
+                    categorias_adicionadas.add(categoria)
 
-        # 3. Criação dos DataFrames usando a função auxiliar
-        df_geral = self._criar_dataframe(resultados)  # Aba Geral
-        df_batidas = self._criar_dataframe(lista_batidas_irregulares)
-        df_duracao = self._criar_dataframe(lista_duracao_irregular)
-        df_ok = self._criar_dataframe(lista_ok)
+        df_geral = self._criar_dataframe(resultados)
+
+        df_ok = self._criar_dataframe(
+            abas["OK"],
+            categoria="OK"
+        )
+
+        df_extra = self._criar_dataframe(
+            abas["EXTRA"],
+            categoria="EXTRA"
+        )
+
+        df_batidas = self._criar_dataframe(
+            abas["FALTA_DE_MARCAÇÃO"],
+            categoria="FALTA_DE_MARCAÇÃO"
+        )
+
+        df_intervalo = self._criar_dataframe(
+            abas["INTERVALOS_IRREGULARES"],
+            categoria="INTERVALOS_IRREGULARES"
+        )
+
+        df_duracao = self._criar_dataframe(
+            abas["JORNADAS_IRREGULARES"],
+            categoria="JORNADAS_IRREGULARES"
+        )
 
         # 4. Gravação do Arquivo com Abas
         caminho_pasta = "data/output"
@@ -98,19 +141,28 @@ class ExcelReporter:
                 if not df_batidas.empty:
                     df_batidas.to_excel(writer, sheet_name='FALTAS DE MARCAÇÃO', index=False)
 
-                # Aba 3: Duração/Intervalo
+                # Aba 3: Duração
                 if not df_duracao.empty:
-                    df_duracao.to_excel(writer, sheet_name='DURAÇÃO IRREGULAR', index=False)
+                    df_duracao.to_excel(writer, sheet_name='JORNADAS IRREGULARES', index=False)
 
-                # Aba 4: Validadas
+                # Aba 4: Intervalo
+                if not df_intervalo.empty:
+                    df_intervalo.to_excel(writer, sheet_name='INTERVALO IRREGULAR', index=False)
+
+                # Aba 5: Extra
+                if not df_extra.empty:
+                    df_extra.to_excel(writer, sheet_name='EXTRA', index=False)
+
+                # Aba 6: Validadas
                 if not df_ok.empty:
-                    df_ok.to_excel(writer, sheet_name='OK', index=False)
+                    df_ok.to_excel(writer, sheet_name='JORNADAS VALIDADAS', index=False)
 
             print("=" * 60)
             print(f"✅ SUCESSO! Relatório salvo em: {caminho_completo}")
-            print(f"   - Faltas de Marcação: {len(lista_batidas_irregulares)}")
-            print(f"   - Duração Irregular:   {len(lista_duracao_irregular)}")
-            print(f"   - Validadas:           {len(lista_ok)}")
+            print(f"   - Faltas de Marcação: {len(abas["FALTA_DE_MARCAÇÃO"])}")
+            print(f"   - Durações Irregulares:   {len(abas["JORNADAS_IRREGULARES"])}")
+            print(f"   - Intervalos Irregulares:   {len(abas["INTERVALOS_IRREGULARES"])}")
+            print(f"   - Validadas:           {len(abas["OK"])}")
             print("=" * 60)
 
         except PermissionError:

@@ -6,12 +6,13 @@ from datetime import datetime
 @dataclass
 class ResultadoJornada:
     id_jornada: int
-    nome: str  # Voltamos a usar apenas o Nome
+    nome: str
     data_inicio_obj: datetime
     data_inicio_str: str
     batidas: list[str]
-    status: str
+    status: list[str]
     duracao: str
+    intervalo : str
 
 
 class Processador:
@@ -55,8 +56,8 @@ class Processador:
         # PARÂMETROS
         MAX_GAP_HORAS = 12
         MAX_DURACAO_JORNADA = 16
-        INICIO_NOTURNO = 21  # 21:00
-        FIM_NOTURNO = 6  # 06:00
+        #INICIO_NOTURNO = 21  # 21:00
+        #FIM_NOTURNO = 7  # 07:00
 
         for row in self.df.itertuples():
             idx = row.Index
@@ -71,7 +72,7 @@ class Processador:
                 id_atual += 1
                 self.df.at[idx, "ID_JORNADA"] = id_atual
 
-                # Reseta estado
+                # Reinicia o estado
                 ultimo_nome = nome
                 ultima_hora = hora
                 ultima_natureza = natureza
@@ -94,21 +95,26 @@ class Processador:
             if gap_horas > MAX_GAP_HORAS or duracao_total > MAX_DURACAO_JORNADA:
                 nova_jornada = True
 
+
+
+        #-------------------------------------------
+        # VERIFICAR LOGICA SEM ESSA PARTE ABAIXO
+        #=------------------------------------------
+
+
+
             # B. Mudança de Data
-            elif hora.date() != ultima_hora.date():
+            #elif hora.date() != ultima_hora.date():
 
-                # Definição estrita de Turno Noturno Válido:
-                # 1. Ontem foi Entrada (0)
-                # 2. Hoje é Saída (1)
-                # 3. Horários compatíveis com noturno
-                eh_continuidade_noturna = (
-                        ultima_natureza == 0
-                        and (ultima_hora.hour >= INICIO_NOTURNO or hora.hour <= FIM_NOTURNO)
-                )
+                # Definição de Turno Noturno
 
-                if not eh_continuidade_noturna:
-                    nova_jornada = True
+                #    eh_continuidade_noturna = (
+                #            ultima_natureza == 0
+                #            and (ultima_hora.hour >= INICIO_NOTURNO or hora.hour <= FIM_NOTURNO)
+            #    )
 
+                #    if not eh_continuidade_noturna:
+            #        nova_jornada = True
 
             # ─────────────────────────────────────────────
             # APLICA DECISÃO
@@ -123,16 +129,28 @@ class Processador:
             ultima_hora = hora
             ultima_natureza = natureza
 
-    def _analisar_status(self, batidas_dt: pd.Series) -> tuple[str, str]:
+    def _analisar_status(self, batidas_dt: pd.Series) -> tuple[list[str], str, str]:
         if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
             batidas_dt = pd.to_datetime(batidas_dt, errors='coerce')
 
         batidas_dt = batidas_dt.dropna()
         qtd = len(batidas_dt)
 
-        # Regra básica: Ímpar é erro
+        # ARMAZENA OS ALERTAS DA JORNADA
+        alertas = []
+
+        duracao_str = "00:00"
+        intervalo = None
+        duracao_horas = 0.0
+
+        # SE IMPAR: FALTA DE MARCAÇÃO
+
         if qtd % 2 != 0:
-            return f"FALTA_DE_MARCAÇÃO ({qtd})", "--:--"
+            alertas.append(f"FALTA_DE_MARCAÇÃO - {qtd}")
+
+            #status, duracao, intervalo
+            return alertas, duracao_str, "0.0"
+
 
         batidas_dt = batidas_dt.sort_values()
         entradas = batidas_dt.iloc[::2].reset_index(drop=True)
@@ -144,13 +162,9 @@ class Processador:
         duracao_horas = total_segundos / 3600
 
         horas_int = int(total_segundos // 3600)
-        minutos_int = int(round((total_segundos % 3600) / 60))
+        minutos_int = int((total_segundos % 3600) // 60)
         duracao_str = f"{horas_int:02d}:{minutos_int:02d}"
 
-        #ARMAZENA AS IRREGULARIDADES
-        alertas = []
-        min_intervalo = 50 / 60
-        max_intervalo = 70 / 60
 
         # Verifica Intervalo apenas se tiver 4 batidas (padrão)
         if qtd == 4:
@@ -159,22 +173,29 @@ class Processador:
             intervalo = (volta_almoco - saida_almoco).total_seconds() / 3600
 
             # INTERVALO MENOR QUE 50 MIN
-            if intervalo < min_intervalo:
-                alertas.append("INTERVALO_CURTO")
+            if intervalo < (50 / 60): alertas.append("INTERVALO_CURTO")
 
-            # INTERVALO MAOIR QUE 01:10 HORAS
-            if intervalo > max_intervalo:
-                alertas.append("INTERVALO_MAIOR")
+            # INTERVALO MAIOR QUE 01:10
+            if intervalo > (70 / 60): alertas.append("INTERVALO_LONGO")
+
+        # EXTRA(DENTRO DO PADRÃO)
+        # 07:21 < JORNADA < 10:00
+        if 7.35 < duracao_horas < 10:alertas.append("EXTRA")
 
         # JORNADA ACIMA DE 10 HORAS
         if duracao_horas > 10: alertas.append("JORNADA_LONGA")
+        if qtd == 2 and duracao_horas > 6: alertas.append("JORNADA_LONGA_SEM_INTERVALO")
+
         # JORNADA MENOR QUE 4 HORAS
         if duracao_horas < 4: alertas.append("JORNADA_CURTA")
 
         if not alertas:
-            return "OK", duracao_str
-        else:
-            return " ".join(alertas), duracao_str
+            alertas.append("OK")
+
+        # status, duracao, intervalo
+        return alertas, duracao_str, str(round(intervalo,2)) if intervalo else "0.0"
+
+
 
     def executar_analise(self, data_inicio_filtro=None, data_fim_filtro=None) -> list[ResultadoJornada]:
         self._preparar_timeline()
@@ -183,11 +204,11 @@ class Processador:
         resultados = []
         grupos = self.df.groupby("ID_JORNADA")
 
-        filtro_inicio = pd.to_datetime(data_inicio_filtro) if data_inicio_filtro else None
+        filtro_inicio = pd.Timestamp(pd.to_datetime(data_inicio_filtro)) if data_inicio_filtro else None
 
         # Filtro de Fim com +1 dia (para pegar o dia final completo)
         if data_fim_filtro:
-            filtro_fim = pd.to_datetime(data_fim_filtro) + pd.Timedelta(days=1)
+            filtro_fim = pd.Timestamp(pd.to_datetime(data_fim_filtro)) + pd.Timedelta(days=1)
         else:
             filtro_fim = None
 
@@ -196,8 +217,8 @@ class Processador:
             primeira_batida = batidas_dt.iloc[0]
 
             # Filtros de Data
-            if filtro_inicio and primeira_batida < filtro_inicio: continue
-            if filtro_fim and primeira_batida >= filtro_fim: continue
+            if filtro_inicio is not None and primeira_batida < filtro_inicio: continue
+            if filtro_fim is not None and primeira_batida >= filtro_fim: continue
 
             batidas_texto = []
             dia_ref = primeira_batida.day
@@ -205,7 +226,7 @@ class Processador:
                 fmt = b.strftime("%H:%M") if b.day == dia_ref else b.strftime("(%d) %H:%M")
                 batidas_texto.append(fmt)
 
-            status, duracao = self._analisar_status(batidas_dt)
+            status, duracao, intervalo = self._analisar_status(batidas_dt)
 
             resultados.append(ResultadoJornada(
                 id_jornada=id_jornada,
@@ -214,7 +235,8 @@ class Processador:
                 data_inicio_str=primeira_batida.strftime("%Y-%m-%d"),
                 batidas=batidas_texto,
                 status=status,
-                duracao=duracao
+                duracao=duracao,
+                intervalo=intervalo
             ))
 
         return resultados

@@ -28,28 +28,63 @@ class DashboardWindow(ctk.CTkFrame):
         self.container_principal.grid_columnconfigure((0,1), weight=1)
         self.container_principal.grid_rowconfigure((0,1), weight=1)
 
+        #FRAMES PARA OS GRÁFICOS
         self.frame_grafico_esquerda = ctk.CTkFrame(self.container_principal)
         self.frame_grafico_esquerda.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
 
         self.frame_grafico_direita = ctk.CTkFrame(self.container_principal)
         self.frame_grafico_direita.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
 
-        self._create_bar()
+
+        if self.dados:
+            self._create_pie_intervalos(self.dados.get("intervalos"))
+            self._create_pie_faltas(self.dados.get("faltas"))
+
+    def _mostrar_mensagem_vazio(self, master, mensagem):
+        """Exibe um aviso caso não existam dados para o gráfico."""
+        lbl = ctk.CTkLabel(master, text=mensagem, font=("Roboto", 14, "italic"), text_color="gray")
+        lbl.pack(expand=True)
 
 
-    def _create_bar(self):
-        fig = Figure(figsize=(5, 5), dpi=100)
+    def _create_pie_faltas(self, dados_faltas):
+        if not dados_faltas:
+            self._mostrar_mensagem_vazio(self.frame_grafico_direita, "Sem faltas de marcação")
+            return
+
+        fig = Figure(figsize=(3, 2), dpi=100, facecolor=None)
         ax = fig.add_subplot(111)
 
-
-        nomes = ["João", "Maria", "José"]
-        valores = [10, 20, 15]
-
-        ax.bar(nomes, valores)
-        ax.set_title("Dados")
-
+        ax.pie(
+            dados_faltas["values"],
+            labels=dados_faltas["labels"],
+            autopct="%1.1f%%",
+            startangle=140,
+            colors=["#673ab7", "#3f51b5"]
+        )
+        ax.set_title("Faltas de Marcação", fontsize=12)
 
         canvas = FigureCanvasTkAgg(fig, master=self.frame_grafico_direita)
         canvas.draw()
         canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)
 
+
+    def _create_pie_intervalos(self, dados_intervalo):
+        if not dados_intervalo:
+            self._mostrar_mensagem_vazio(self.frame_grafico_esquerda, "Sem irregularidades de intervalo")
+            return
+
+        fig = Figure(figsize=(3, 2), dpi=100, facecolor=None)
+        ax = fig.add_subplot(111)
+
+        ax.pie(
+            dados_intervalo["values"],
+            labels=dados_intervalo["labels"],
+            autopct="%1.1f%%",
+            startangle=90,
+            colors=["#ff9800", "#f44336"]
+        )
+        ax.set_title("Intervalos Irregulares", fontsize=12)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.frame_grafico_esquerda)
+        canvas.draw()
+        canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)
