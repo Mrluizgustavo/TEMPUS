@@ -25,8 +25,11 @@ class DashboardWindow(ctk.CTkFrame):
         self.container_principal = ctk.CTkFrame(self)
         self.container_principal.pack(expand=True, fill="both", padx=20, pady=10)
 
-        self.container_principal.grid_columnconfigure((0,1), weight=1)
-        self.container_principal.grid_rowconfigure((0,1), weight=1)
+        #CONFIGURAÇÃO DAS COLUNAS E LINHAS
+        self.container_principal.grid_columnconfigure(0, weight=3)
+        self.container_principal.grid_columnconfigure(1, weight=1)
+        self.container_principal.grid_rowconfigure(0, weight=1)
+        self.container_principal.grid_rowconfigure(1, weight=3)
 
         #FRAMES PARA OS GRÁFICOS
         self.frame_grafico_esquerda = ctk.CTkFrame(self.container_principal)
@@ -35,56 +38,103 @@ class DashboardWindow(ctk.CTkFrame):
         self.frame_grafico_direita = ctk.CTkFrame(self.container_principal)
         self.frame_grafico_direita.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
 
+        self.frame_grafico_main = ctk.CTkFrame(self.container_principal)
+        self.frame_grafico_main.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+
 
         if self.dados:
             self._create_pie_intervalos(self.dados.get("intervalos"))
-            self._create_pie_faltas(self.dados.get("faltas"))
+            self._create_line_faltas_marcacao(self.dados.get("faltas"))
+            self._create_bar_top_5_funcionarios_faltas_marcacao(self.dados.get("faltas"))
 
     def _mostrar_mensagem_vazio(self, master, mensagem):
         """Exibe um aviso caso não existam dados para o gráfico."""
         lbl = ctk.CTkLabel(master, text=mensagem, font=("Roboto", 14, "italic"), text_color="gray")
         lbl.pack(expand=True)
 
+    def _create_line_faltas_marcacao(self, dados):
+        if not dados:
+            self._mostrar_mensagem_vazio(self.frame_grafico_main, "Sem faltas de marcação")
+            return
 
-    def _create_pie_faltas(self, dados_faltas):
-        if not dados_faltas:
+        dark_bg_color = "#2b2b2b"  # fundo escuro seguro para Matplotlib
+
+        fig = Figure(figsize=(3, 2), dpi=100, facecolor=dark_bg_color)
+        ax = fig.add_subplot(111)
+        ax.patch.set_facecolor(dark_bg_color)  # fundo do eixo
+        ax.plot(
+            dados["labels_faltas_marcacao"],
+            dados["values_faltas_marcacao"],
+            marker="o"
+        )
+
+
+        ax.set_title("Faltas de Marcação", fontsize=10, color="white")
+        ax.set_xlabel("Data", fontsize=10, color="white")
+        ax.set_ylabel("Quantidade", fontsize=8, color="white")
+
+        ax.tick_params(axis="x", colors="white")
+        ax.tick_params(axis="y", colors="white")
+        ax.grid(True, linestyle="--", color="gray")
+
+        canvas = FigureCanvasTkAgg(fig, master=self.frame_grafico_main)
+        canvas.draw()
+        canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)
+
+
+    def _create_pie_intervalos(self, dados):
+        if not dados:
+            self._mostrar_mensagem_vazio(self.frame_grafico_esquerda, "Sem irregularidades de intervalo")
+            return
+
+        dark_bg_color = "#2b2b2b"
+
+        fig = Figure(figsize=(3, 2), dpi=100, facecolor=dark_bg_color)
+        ax = fig.add_subplot(111)
+        ax.patch.set_facecolor(dark_bg_color)
+
+        ax.pie(
+            dados["values"],
+            labels=dados["labels"],
+            autopct="%1.1f%%",
+            startangle=90,
+            colors=["#ff9800", "#f44336"],
+            textprops={'color': 'white', 'fontsize': 10}
+        )
+
+        ax.set_title("Intervalos Irregulares", fontsize=10, color="white")
+
+        canvas = FigureCanvasTkAgg(fig, master=self.frame_grafico_esquerda)
+        canvas.draw()
+        canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)
+
+    def _create_bar_top_5_funcionarios_faltas_marcacao(self, dados):
+        if not dados:
             self._mostrar_mensagem_vazio(self.frame_grafico_direita, "Sem faltas de marcação")
             return
 
-        fig = Figure(figsize=(3, 2), dpi=100, facecolor=None)
-        ax = fig.add_subplot(111)
+        dark_bg_color = "#2b2b2b"
 
-        ax.pie(
-            dados_faltas["values"],
-            labels=dados_faltas["labels"],
-            autopct="%1.1f%%",
-            startangle=140,
-            colors=["#673ab7", "#3f51b5"]
+        fig = Figure(figsize=(3, 2), dpi=100, facecolor=dark_bg_color)
+        ax = fig.add_subplot(111)
+        ax.patch.set_facecolor(dark_bg_color)
+
+        ax.bar(
+            dados["top_funcionarios_labels"],
+            dados["top_funcionarios_values"],
+            color="#1f77b4"
+
         )
-        ax.set_title("Faltas de Marcação", fontsize=12)
+
+        ax.set_title("Top 5 funcionários: Faltas de Marcação", fontsize=10, color="white")
+        ax.tick_params(axis='x', colors='white', labelsize=8)
+        ax.tick_params(axis='y', colors='white', labelsize=8)
+
+        # REMOVE BORDAS DO GRAFICO
+        for spine in ax.spines.values():
+            spine.set_visible(False)
 
         canvas = FigureCanvasTkAgg(fig, master=self.frame_grafico_direita)
         canvas.draw()
         canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)
 
-
-    def _create_pie_intervalos(self, dados_intervalo):
-        if not dados_intervalo:
-            self._mostrar_mensagem_vazio(self.frame_grafico_esquerda, "Sem irregularidades de intervalo")
-            return
-
-        fig = Figure(figsize=(3, 2), dpi=100, facecolor=None)
-        ax = fig.add_subplot(111)
-
-        ax.pie(
-            dados_intervalo["values"],
-            labels=dados_intervalo["labels"],
-            autopct="%1.1f%%",
-            startangle=90,
-            colors=["#ff9800", "#f44336"]
-        )
-        ax.set_title("Intervalos Irregulares", fontsize=12)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.frame_grafico_esquerda)
-        canvas.draw()
-        canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)

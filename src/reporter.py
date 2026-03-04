@@ -30,8 +30,9 @@ class ExcelReporter:
                 "NOME": r.nome,
                 "DATA": r.data_inicio_str,
                 "STATUS": status_exibicao,
-                "DURAÇÃO": r.duracao,
-                "QTD_BATIDAS": len(r.batidas)
+                "QTD_BATIDAS": len(r.batidas),
+                "DURAÇÃO": r.duracao
+
             }
 
             for i, horario in enumerate(r.batidas):
@@ -41,7 +42,7 @@ class ExcelReporter:
 
         df = pd.DataFrame(dados)
 
-        colunas_fixas = ["NOME", "DATA", "STATUS", "DURAÇÃO", "QTD_BATIDAS"]
+        colunas_fixas = ["NOME", "DATA", "STATUS", "QTD_BATIDAS", "DURAÇÃO" ]
         colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
         ordem_final = colunas_fixas + colunas_batidas
@@ -68,7 +69,7 @@ class ExcelReporter:
             "OK": "OK",
             "EXTRA": "EXTRA",
 
-            "FALTA_DE_MARCAÇÃO": "FALTA_DE_MARCAÇÃO",
+            "FALTA_DE_MARCACAO": "FALTA_DE_MARCACAO",
 
             "INTERVALO_CURTO": "INTERVALOS_IRREGULARES",
             "INTERVALO_LONGO": "INTERVALOS_IRREGULARES",
@@ -81,7 +82,7 @@ class ExcelReporter:
         abas = {
             "OK": [],
             "EXTRA": [],
-            "FALTA_DE_MARCAÇÃO": [],
+            "FALTA_DE_MARCACAO": [],
             "INTERVALOS_IRREGULARES": [],
             "JORNADAS_IRREGULARES": []
         }
@@ -111,8 +112,8 @@ class ExcelReporter:
         )
 
         df_batidas = self._criar_dataframe(
-            abas["FALTA_DE_MARCAÇÃO"],
-            categoria="FALTA_DE_MARCAÇÃO"
+            abas["FALTA_DE_MARCACAO"],
+            categoria="FALTA_DE_MARCACAO"
         )
 
         df_intervalo = self._criar_dataframe(
@@ -159,7 +160,7 @@ class ExcelReporter:
 
             print("=" * 60)
             print(f"✅ SUCESSO! Relatório salvo em: {caminho_completo}")
-            print(f"   - Faltas de Marcação: {len(abas["FALTA_DE_MARCAÇÃO"])}")
+            print(f"   - Faltas de Marcação: {len(abas["FALTA_DE_MARCACAO"])}")
             print(f"   - Durações Irregulares:   {len(abas["JORNADAS_IRREGULARES"])}")
             print(f"   - Intervalos Irregulares:   {len(abas["INTERVALOS_IRREGULARES"])}")
             print(f"   - Validadas:           {len(abas["OK"])}")

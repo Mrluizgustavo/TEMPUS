@@ -144,8 +144,7 @@ class BancoDeDados:
                 j.nome,
                 s.tipo_status
             FROM jornadas j
-            INNER JOIN status_jornada s
-                ON s.id_jornada = j.id
+            INNER JOIN status_jornada s ON s.id_jornada = j.id
             WHERE s.tipo_status IN ('INTERVALO_CURTO', 'INTERVALO_LONGO')
         """
 
@@ -153,19 +152,17 @@ class BancoDeDados:
 
         if df.empty:return None
 
+        mapeamento_nomes = {
+            'INTERVALO_CURTO': 'Curtos',
+            'INTERVALO_LONGO': 'Longos'
+        }
 
-        # -------- KPI --------
+        #MUDA O NOME DAS LABELS
+        df["tipo_status"] = df["tipo_status"].replace(mapeamento_nomes)
+
+
         total_jornadas_afetadas = df["id"].nunique()
-
-        # -------- Gráfico de tipos --------
         tipos_counts = df["tipo_status"].value_counts()
-
-        # -------- Top 5 colaboradores com mais problemas de intervalo --------
-        top5_colaboradores = (
-            df["nome"]
-            .value_counts()
-            .head(5)
-        )
 
         return {
             "total_intervalos_irregulares": total_jornadas_afetadas,
@@ -174,9 +171,6 @@ class BancoDeDados:
             "labels": tipos_counts.index.tolist(),
             "values": tipos_counts.values.tolist(),
 
-            # Top 5 colaboradores
-            "top5_labels": top5_colaboradores.index.tolist(),
-            "top5_values": top5_colaboradores.values.tolist()
         }
 
 
@@ -184,26 +178,32 @@ class BancoDeDados:
     def obter_dados_faltas(self, conn):
 
         query = """
-            SELECT 
-                j.id,
+            SELECT
                 j.nome,
-                s.tipo_status
+                DATE(j.data) as data
             FROM jornadas j
             INNER JOIN status_jornada s ON s.id_jornada = j.id
-            WHERE s.tipo_status LIKE 'FALTA_DE_MARCAÇÃO%'
+            WHERE s.tipo_status = 'FALTA_DE_MARCACAO'
         """
-
 
         df = pd.read_sql_query(query, conn)
 
         if df.empty:return None
 
-        # Contagem de tipos (ex: quantas faltas com 1 batida, quantas com 3...)
-        contagem_tipos = df["tipo_status"].value_counts()
+        #AGRUPANDO POR DATA
+        #CONTANDO QUANTIDADES E CRIANDO NOVO ÍNDICE "TOTAL"
+        df["data"] = pd.to_datetime(df["data"])
+        faltas_grouped = df.groupby("data").size().reset_index(name="total")
+        faltas_grouped = faltas_grouped.sort_values("data")
+
+        #TOP 5 FUNCIONARIOS COM FALTAS DE MARCAÇÕES
+        nomes_count = df["nome"].value_counts().head(5)
 
         return {
-            "labels": contagem_tipos.index.tolist(),
-            "values": contagem_tipos.values.tolist(),
-            "total_faltas": len(df)
+            "labels_faltas_marcacao": faltas_grouped["data"].dt.strftime("%d/%m").tolist(),
+            "values_faltas_marcacao": faltas_grouped["total"].tolist(),
+            "total_faltas": int(faltas_grouped["total"].sum()),
+            "top_funcionarios_labels": nomes_count.index.tolist(),
+            "top_funcionarios_values": nomes_count.values.tolist()
         }
 

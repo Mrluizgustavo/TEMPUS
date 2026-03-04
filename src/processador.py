@@ -146,7 +146,7 @@ class Processador:
         # SE IMPAR: FALTA DE MARCAÇÃO
 
         if qtd % 2 != 0:
-            alertas.append(f"FALTA_DE_MARCAÇÃO - {qtd}")
+            alertas.append(f"FALTA_DE_MARCACAO")
 
             #status, duracao, intervalo
             return alertas, duracao_str, "0.0"
