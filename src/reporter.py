@@ -27,7 +27,10 @@ class ExcelReporter:
                 status_exibicao = " | ".join(r.status)
 
             linha = {
+                "LOJA": r.loja,
+                "CHAPA":r.chapa,
                 "NOME": r.nome,
+                "IDADE": r.idade,
                 "DATA": r.data_inicio_str,
                 "STATUS": status_exibicao,
                 "QTD_BATIDAS": len(r.batidas),
@@ -42,7 +45,7 @@ class ExcelReporter:
 
         df = pd.DataFrame(dados)
 
-        colunas_fixas = ["NOME", "DATA", "STATUS", "QTD_BATIDAS", "DURAÇÃO" ]
+        colunas_fixas = ["LOJA","CHAPA","NOME","IDADE", "DATA", "STATUS", "QTD_BATIDAS", "DURAÇÃO" ]
         colunas_batidas = [f"BATIDA {i + 1}" for i in range(max_batidas)]
 
         ordem_final = colunas_fixas + colunas_batidas
@@ -71,6 +74,8 @@ class ExcelReporter:
 
             "FALTA_DE_MARCACAO": "FALTA_DE_MARCACAO",
 
+            "JORNADA_IRREGULAR_MENOR":"JORNADA_IRREGULAR_MENOR",
+
             "INTERVALO_CURTO": "INTERVALOS_IRREGULARES",
             "INTERVALO_LONGO": "INTERVALOS_IRREGULARES",
 
@@ -82,6 +87,7 @@ class ExcelReporter:
         abas = {
             "OK": [],
             "EXTRA": [],
+            "JORNADA_IRREGULAR_MENOR": [],
             "FALTA_DE_MARCACAO": [],
             "INTERVALOS_IRREGULARES": [],
             "JORNADAS_IRREGULARES": []
@@ -109,6 +115,11 @@ class ExcelReporter:
         df_extra = self._criar_dataframe(
             abas["EXTRA"],
             categoria="EXTRA"
+        )
+
+        df_menores = self._criar_dataframe(
+            abas["JORNADA_IRREGULAR_MENOR"],
+            categoria="JORNADA_IRREGULAR_MENOR"
         )
 
         df_batidas = self._criar_dataframe(
@@ -142,25 +153,31 @@ class ExcelReporter:
                 if not df_batidas.empty:
                     df_batidas.to_excel(writer, sheet_name='FALTAS DE MARCAÇÃO', index=False)
 
-                # Aba 3: Duração
+                # Aba 3: Menores
+                if not df_menores.empty:
+                    df_menores.to_excel(writer, sheet_name='MENORES', index=False)
+
+                # Aba 4: Duração
                 if not df_duracao.empty:
                     df_duracao.to_excel(writer, sheet_name='JORNADAS IRREGULARES', index=False)
 
-                # Aba 4: Intervalo
+                # Aba 5: Intervalo
                 if not df_intervalo.empty:
                     df_intervalo.to_excel(writer, sheet_name='INTERVALO IRREGULAR', index=False)
 
-                # Aba 5: Extra
+                # Aba 6: Extra
                 if not df_extra.empty:
                     df_extra.to_excel(writer, sheet_name='EXTRA', index=False)
 
-                # Aba 6: Validadas
+
+                # Aba 7: Validadas
                 if not df_ok.empty:
                     df_ok.to_excel(writer, sheet_name='JORNADAS VALIDADAS', index=False)
 
             print("=" * 60)
             print(f"✅ SUCESSO! Relatório salvo em: {caminho_completo}")
             print(f"   - Faltas de Marcação: {len(abas["FALTA_DE_MARCACAO"])}")
+            print(f"   - Batida Irregular Menores: {len(abas["JORNADA_IRREGULAR_MENOR"])}")
             print(f"   - Durações Irregulares:   {len(abas["JORNADAS_IRREGULARES"])}")
             print(f"   - Intervalos Irregulares:   {len(abas["INTERVALOS_IRREGULARES"])}")
             print(f"   - Validadas:           {len(abas["OK"])}")

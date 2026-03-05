@@ -6,7 +6,10 @@ from datetime import datetime
 @dataclass
 class ResultadoJornada:
     id_jornada: int
+    chapa: str
+    loja: str
     nome: str
+    idade : int
     data_inicio_obj: datetime
     data_inicio_str: str
     batidas: list[str]
@@ -95,13 +98,9 @@ class Processador:
             if gap_horas > MAX_GAP_HORAS or duracao_total > MAX_DURACAO_JORNADA:
                 nova_jornada = True
 
-
-
         #-------------------------------------------
         # VERIFICAR LOGICA SEM ESSA PARTE ABAIXO
         #=------------------------------------------
-
-
 
             # B. Mudança de Data
             #elif hora.date() != ultima_hora.date():
@@ -129,12 +128,13 @@ class Processador:
             ultima_hora = hora
             ultima_natureza = natureza
 
-    def _analisar_status(self, batidas_dt: pd.Series) -> tuple[list[str], str, str]:
+    def _analisar_status(self, batidas_dt: pd.Series, idade: int) -> tuple[list[str], str, str, int]:
         if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
             batidas_dt = pd.to_datetime(batidas_dt, errors='coerce')
 
         batidas_dt = batidas_dt.dropna()
         qtd = len(batidas_dt)
+
 
         # ARMAZENA OS ALERTAS DA JORNADA
         alertas = []
@@ -143,13 +143,23 @@ class Processador:
         intervalo = None
         duracao_horas = 0.0
 
-        # SE IMPAR: FALTA DE MARCAÇÃO
+        if idade < 18:
+            for batida in batidas_dt:
+                hora_batida = batida.time()
 
+                # Limite legal: Proibido entre 22:00 e 05:00
+                if hora_batida >= datetime.strptime("22:00", "%H:%M").time() or \
+                        hora_batida < datetime.strptime("05:00", "%H:%M").time():
+                    alertas.append("JORNADA_IRREGULAR_MENOR")
+                    break
+
+
+        # SE IMPAR: FALTA DE MARCAÇÃO
         if qtd % 2 != 0:
             alertas.append(f"FALTA_DE_MARCACAO")
 
             #status, duracao, intervalo
-            return alertas, duracao_str, "0.0"
+            return alertas, duracao_str, "0.0", idade
 
 
         batidas_dt = batidas_dt.sort_values()
@@ -193,7 +203,7 @@ class Processador:
             alertas.append("OK")
 
         # status, duracao, intervalo
-        return alertas, duracao_str, str(round(intervalo,2)) if intervalo else "0.0"
+        return alertas, duracao_str, str(round(intervalo,2)) if intervalo else "0.0", idade
 
 
 
@@ -215,6 +225,9 @@ class Processador:
         for id_jornada, dados in grupos:
             batidas_dt = dados["DATETIME"]
             primeira_batida = batidas_dt.iloc[0]
+            idade_colaborador = dados["IDADE"].iloc[0]
+            loja = dados["LOJA"].iloc[0]
+            chapa = dados["CHAPA"].iloc[0]
 
             # Filtros de Data
             if filtro_inicio is not None and primeira_batida < filtro_inicio: continue
@@ -226,11 +239,14 @@ class Processador:
                 fmt = b.strftime("%H:%M") if b.day == dia_ref else b.strftime("(%d) %H:%M")
                 batidas_texto.append(fmt)
 
-            status, duracao, intervalo = self._analisar_status(batidas_dt)
+            status, duracao, intervalo, idade = self._analisar_status(batidas_dt, idade_colaborador)
 
             resultados.append(ResultadoJornada(
                 id_jornada=id_jornada,
                 nome=dados["NOME"].iloc[0],
+                chapa = chapa,
+                idade = idade,
+                loja = loja,
                 data_inicio_obj=primeira_batida,
                 data_inicio_str=primeira_batida.strftime("%Y-%m-%d"),
                 batidas=batidas_texto,
