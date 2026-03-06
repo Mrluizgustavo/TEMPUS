@@ -133,7 +133,8 @@ class BancoDeDados:
             dados = {
                 "intervalos": self.obter_dados_intervalos(conn),
                 "faltas": self.obter_dados_faltas(conn),
-                "menores": self.obter_dados_menores(conn)
+                "menores": self.obter_dados_menores(conn),
+                "total_validado": self.obter_jornadas_validadas(conn)
             }
             return dados
         finally:
@@ -164,6 +165,25 @@ class BancoDeDados:
 
 
 
+    def obter_jornadas_validadas(self, conn):
+        query = """
+            SELECT
+                COUNT(j.id) as total
+            FROM jornadas j
+            LEFT JOIN status_jornada s ON s.id_jornada = j.id
+            WHERE s.id_jornada IS NULL
+            """
+
+        df = pd.read_sql_query(query, conn)
+
+        if df.empty: return None
+
+
+        total = df["total"].iloc[0]
+
+        return {
+            "Total_validado": total
+        }
 
 
     def obter_dados_intervalos(self, conn):

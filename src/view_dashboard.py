@@ -46,7 +46,7 @@ class DashboardWindow(ctk.CTkFrame):
 
 
         if self.dados:
-            self._create_pie_intervalos(self.dados.get("intervalos"))
+            self._create_pie_intervalos(self.dados.get("intervalos"), self.dados.get("total_validado"))
             self._create_line_faltas_marcacao(self.dados.get("faltas"))
             self._create_bar_top_5_funcionarios_faltas_marcacao(self.dados.get("faltas"))
             self._create_bar_horinzontal_menores(self.dados.get("menores"))
@@ -86,7 +86,7 @@ class DashboardWindow(ctk.CTkFrame):
         canvas.get_tk_widget().pack(expand=True, fill="both", padx=5, pady=5)
 
 
-    def _create_pie_intervalos(self, dados):
+    def _create_pie_intervalos(self, dados, total):
         if not dados:
             self._mostrar_mensagem_vazio(self.frame_row_0_column_0, "Sem irregularidades de intervalo")
             return
@@ -97,16 +97,24 @@ class DashboardWindow(ctk.CTkFrame):
         ax = fig.add_subplot(111)
         ax.patch.set_facecolor(dark_bg_color)
 
+        total_ok = total["Total_validado"]
+
+        labels = list(dados["labels"])
+        values = list(dados["values"])
+
+        labels.append("Regulares")
+        values.append(total_ok)
+
         ax.pie(
-            dados["values"],
-            labels=dados["labels"],
+            values,
+            labels=labels,
             autopct="%1.1f%%",
-            startangle=90,
-            colors=["#ff9800", "#f44336"],
-            textprops={'color': 'white', 'fontsize': 10}
+            startangle=140,
+            colors=["#ff9800", "#f44336", "#4CAF50"],
+            textprops={'color': 'white', 'fontsize': 8}
         )
 
-        ax.set_title("Intervalos Irregulares", fontsize=10, color="white")
+        ax.set_title("Intervalos Irregulares x Regulares", fontsize=10, color="white")
 
         canvas = FigureCanvasTkAgg(fig, master=self.frame_row_0_column_0)
         canvas.draw()
@@ -179,7 +187,7 @@ class DashboardWindow(ctk.CTkFrame):
 
     def _create_bar_horinzontal_menores(self, dados):
         if not dados:
-            self._mostrar_mensagem_vazio("Sem jornadas irregulares de menores")
+            self._mostrar_mensagem_vazio(self.frame_row_1_column_1, "Sem jornadas irregulares de menores")
             return
 
         #CONFIGURAÇÕES
