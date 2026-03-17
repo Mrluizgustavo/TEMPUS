@@ -121,89 +121,104 @@ class Processador:
             if nova_jornada:
                 id_atual += 1
                 inicio_jornada = hora
+                ultima_natureza = natureza
 
             self.df.at[idx, "ID_JORNADA"] = id_atual
 
             # Atualiza estado para próxima iteração
             ultima_hora = hora
-            ultima_natureza = natureza
+
+
+    def _corrigir_ordem_noturna(self, batidas_dt: pd.Series) -> pd.Series:
+        """
+        Reordena batidas que cruzam meia-noite.
+        Heurística: se a diferença entre batida[i] e batida[i-1] for > 12h,
+        assumimos que as batidas menores são do dia seguinte e devem ir ao final.
+        """
+        batidas = batidas_dt.sort_values().reset_index(drop=True)
+
+        # Detecta o "salto" que indica virada de dia
+        for i in range(1, len(batidas)):
+            diff = (batidas.iloc[i] - batidas.iloc[i - 1]).total_seconds() / 3600
+            if diff > 12:
+                # Tudo antes do índice i é "dia seguinte" → move para o fim
+                parte_seguinte = batidas.iloc[:i].copy()
+                parte_atual = batidas.iloc[i:].copy()
+
+                # Avança as batidas do "dia seguinte" em 1 dia
+                parte_seguinte = parte_seguinte + pd.Timedelta(days=1)
+
+                batidas = pd.concat([parte_atual, parte_seguinte]).reset_index(drop=True)
+                break
+
+        return batidas
 
     def _analisar_status(self, batidas_dt: pd.Series, idade: int) -> tuple[list[str], str, str, int]:
         if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
             batidas_dt = pd.to_datetime(batidas_dt, errors='coerce')
 
         batidas_dt = batidas_dt.dropna()
+
+        # ✅ CORREÇÃO: reordena considerando virada de dia
+        batidas_dt = self._corrigir_ordem_noturna(batidas_dt)
         qtd = len(batidas_dt)
 
-
-        # ARMAZENA OS ALERTAS DA JORNADA
         alertas = []
-
         duracao_str = "00:00"
-        intervalo = None
-        duracao_horas = 0.0
+        intervalo_str = "0.0"
 
+        # VERIFICAÇÃO MENORES DE IDADE
         if idade < 18:
             for batida in batidas_dt:
-                hora_batida = batida.time()
-
-                # Limite legal: Proibido entre 22:00 e 05:00
-                if hora_batida >= datetime.strptime("22:00", "%H:%M").time() or \
-                        hora_batida < datetime.strptime("05:00", "%H:%M").time():
+                if batida.hour >= 22 or batida.hour < 5:
                     alertas.append("JORNADA_IRREGULAR_MENOR")
                     break
 
-
-        # SE IMPAR: FALTA DE MARCAÇÃO
         if qtd % 2 != 0:
-            alertas.append(f"FALTA_DE_MARCACAO")
+            alertas.append("FALTA_DE_MARCACAO")
+            return alertas, duracao_str, intervalo_str, idade
 
-            #status, duracao, intervalo
-            return alertas, duracao_str, "0.0", idade
-
-
-        batidas_dt = batidas_dt.sort_values()
         entradas = batidas_dt.iloc[::2].reset_index(drop=True)
         saidas = batidas_dt.iloc[1::2].reset_index(drop=True)
 
-        #CALCULA A JORNADA TRABALHADA
-        tempo_total = (saidas - entradas).sum()
-        total_segundos = tempo_total.total_seconds()
+        # ✅ Deltas sempre positivos agora (datas corrigidas)
+        deltas = saidas - entradas
+        total_timedelta = deltas.sum()
+
+        total_segundos = total_timedelta.total_seconds()
         duracao_horas = total_segundos / 3600
 
         horas_int = int(total_segundos // 3600)
         minutos_int = int((total_segundos % 3600) // 60)
         duracao_str = f"{horas_int:02d}:{minutos_int:02d}"
 
+        # CÁLCULO DO INTERVALO
+        intervalo = 0.0
 
-        # Verifica Intervalo apenas se tiver 4 batidas (padrão)
         if qtd == 4:
             saida_almoco = batidas_dt.iloc[1]
             volta_almoco = batidas_dt.iloc[2]
-            intervalo = (volta_almoco - saida_almoco).total_seconds() / 3600
 
-            # INTERVALO MENOR QUE 50 MIN
+            diff_intervalo = volta_almoco - saida_almoco  # ✅ sempre positivo agora
+
+            intervalo = diff_intervalo.total_seconds() / 3600
+            intervalo_str = str(round(intervalo, 2))
+
             if intervalo < (50 / 60): alertas.append("INTERVALO_CURTO")
-
-            # INTERVALO MAIOR QUE 01:10
             if intervalo > (70 / 60): alertas.append("INTERVALO_LONGO")
 
-        # EXTRA(DENTRO DO PADRÃO)
-        # 07:21 < JORNADA < 10:00
-        if 7.35 < duracao_horas < 10:alertas.append("EXTRA")
-
-        # JORNADA ACIMA DE 10 HORAS
-        if duracao_horas > 10: alertas.append("JORNADA_LONGA")
+        if 7.35 < duracao_horas < 10:  alertas.append("EXTRA")
+        if duracao_horas > 10:         alertas.append("JORNADA_LONGA")
         if qtd == 2 and duracao_horas > 6: alertas.append("JORNADA_LONGA_SEM_INTERVALO")
+        if duracao_horas < 4:          alertas.append("JORNADA_CURTA")
 
-        # JORNADA MENOR QUE 4 HORAS
-        if duracao_horas < 4: alertas.append("JORNADA_CURTA")
+        # INTERJORNADA (apenas com 2 batidas — saída e próxima entrada)
+        # (requer contexto externo, não tratado aqui)
 
         if not alertas:
             alertas.append("OK")
 
-        # status, duracao, intervalo
-        return alertas, duracao_str, str(round(intervalo,2)) if intervalo else "0.0", idade
+        return alertas, duracao_str, intervalo_str, idade
 
 
 
