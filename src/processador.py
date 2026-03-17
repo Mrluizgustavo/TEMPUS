@@ -1,21 +1,27 @@
 import pandas as pd
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+
+
+MINUTOS_INTERJORNADA_MINIMA = 11 * 60  # 660 min — exigência CLT
 
 
 @dataclass
 class ResultadoJornada:
-    id_jornada: int
-    chapa: str
-    loja: str
-    nome: str
-    idade : int
-    data_inicio_obj: datetime
-    data_inicio_str: str
-    batidas: list[str]
-    status: list[str]
-    duracao: str
-    intervalo : str
+    id_jornada:          int
+    chapa:               str
+    loja:                str
+    nome:                str
+    idade:               int
+    data_inicio_obj:     datetime
+    data_inicio_str:     str
+    batidas:             list[str]
+    status:              list[str]
+    duracao:             str
+    intervalo:           str
+    # Tempo entre o fim desta jornada e o início da próxima do mesmo funcionário.
+    # None significa que não há jornada anterior para comparar (primeira do período).
+    minutos_interjornada: int | None = field(default=None)
 
 
 class Processador:
@@ -23,24 +29,19 @@ class Processador:
         self.df = df.copy()
 
     def _preparar_timeline(self):
-        # Conversão de Data e Hora
-        self.df["DATA"] = pd.to_datetime(self.df["DATA"], errors="coerce")
+        self.df["DATA"]       = pd.to_datetime(self.df["DATA"], errors="coerce")
         self.df["HORA_DELTA"] = pd.to_timedelta(self.df["BATIDA"], unit="m")
-        self.df["DATETIME"] = self.df["DATA"] + self.df["HORA_DELTA"]
+        self.df["DATETIME"]   = self.df["DATA"] + self.df["HORA_DELTA"]
 
         self.df.dropna(subset=["DATETIME"], inplace=True)
-
-        # ORDENAÇÃO POR NOME
         self.df.sort_values(by=["NOME", "DATETIME"], inplace=True)
-
         self._remover_duplicatas()
         self.df.reset_index(drop=True, inplace=True)
 
     def _remover_duplicatas(self):
-        # Verifica se é a mesma pessoa e se o tempo é curto
-        mesma_pessoa = self.df["NOME"] == self.df["NOME"].shift(1)
-        diff_tempo = self.df["DATETIME"].diff()
-        tolerancia = pd.Timedelta(minutes=5)
+        mesma_pessoa      = self.df["NOME"] == self.df["NOME"].shift(1)
+        diff_tempo        = self.df["DATETIME"].diff()
+        tolerancia        = pd.Timedelta(minutes=5)
         mascara_duplicadas = mesma_pessoa & (diff_tempo < tolerancia)
 
         if mascara_duplicadas.sum() > 0:
@@ -49,105 +50,53 @@ class Processador:
     def _segmentar_jornadas(self):
         self.df["ID_JORNADA"] = 0
 
-        id_atual = 0
+        id_atual        = 0
+        ultimo_nome     = None
+        ultima_hora     = None
+        ultima_natureza = None
+        inicio_jornada  = None
 
-        ultimo_nome = None
-        ultima_hora = None
-        ultima_natureza = None  # 0 = ENTRADA, 1 = SAÍDA
-        inicio_jornada = None
-
-        # PARÂMETROS
-        MAX_GAP_HORAS = 12
+        MAX_GAP_HORAS       = 12
         MAX_DURACAO_JORNADA = 16
-        #INICIO_NOTURNO = 21  # 21:00
-        #FIM_NOTURNO = 7  # 07:00
 
         for row in self.df.itertuples():
-            idx = row.Index
-            nome = row.NOME
-            hora = row.DATETIME
+            idx      = row.Index
+            nome     = row.NOME
+            hora     = row.DATETIME
             natureza = row.NATUREZA
 
-            # ─────────────────────────────────────────────
-            # 1. TROCA DE COLABORADOR
-            # ─────────────────────────────────────────────
             if nome != ultimo_nome:
                 id_atual += 1
                 self.df.at[idx, "ID_JORNADA"] = id_atual
-
-                # Reinicia o estado
-                ultimo_nome = nome
-                ultima_hora = hora
+                ultimo_nome     = nome
+                ultima_hora     = hora
                 ultima_natureza = natureza
-                inicio_jornada = hora
+                inicio_jornada  = hora
                 continue
 
-            # ─────────────────────────────────────────────
-            # CÁLCULOS DE TEMPO
-            # ─────────────────────────────────────────────
-            gap_horas = (hora - ultima_hora).total_seconds() / 3600
+            gap_horas     = (hora - ultima_hora).total_seconds() / 3600
             duracao_total = (hora - inicio_jornada).total_seconds() / 3600
+            nova_jornada  = False
 
-            nova_jornada = False
-
-            # ─────────────────────────────────────────────
-            # 2. VERIFICAÇÕES DE QUEBRA DE JORNADA
-            # ─────────────────────────────────────────────
-
-            # A. Limites Absolutos (Segurança)
             if gap_horas > MAX_GAP_HORAS or duracao_total > MAX_DURACAO_JORNADA:
                 nova_jornada = True
 
-        #-------------------------------------------
-        # VERIFICAR LOGICA SEM ESSA PARTE ABAIXO
-        #=------------------------------------------
-
-            # B. Mudança de Data
-            #elif hora.date() != ultima_hora.date():
-
-                # Definição de Turno Noturno
-
-                #    eh_continuidade_noturna = (
-                #            ultima_natureza == 0
-                #            and (ultima_hora.hour >= INICIO_NOTURNO or hora.hour <= FIM_NOTURNO)
-            #    )
-
-                #    if not eh_continuidade_noturna:
-            #        nova_jornada = True
-
-            # ─────────────────────────────────────────────
-            # APLICA DECISÃO
-            # ─────────────────────────────────────────────
             if nova_jornada:
-                id_atual += 1
-                inicio_jornada = hora
-                ultima_natureza = natureza
+                id_atual        += 1
+                inicio_jornada   = hora
+                ultima_natureza  = natureza
 
             self.df.at[idx, "ID_JORNADA"] = id_atual
-
-            # Atualiza estado para próxima iteração
             ultima_hora = hora
 
-
     def _corrigir_ordem_noturna(self, batidas_dt: pd.Series) -> pd.Series:
-        """
-        Reordena batidas que cruzam meia-noite.
-        Heurística: se a diferença entre batida[i] e batida[i-1] for > 12h,
-        assumimos que as batidas menores são do dia seguinte e devem ir ao final.
-        """
         batidas = batidas_dt.sort_values().reset_index(drop=True)
 
-        # Detecta o "salto" que indica virada de dia
         for i in range(1, len(batidas)):
             diff = (batidas.iloc[i] - batidas.iloc[i - 1]).total_seconds() / 3600
             if diff > 12:
-                # Tudo antes do índice i é "dia seguinte" → move para o fim
-                parte_seguinte = batidas.iloc[:i].copy()
-                parte_atual = batidas.iloc[i:].copy()
-
-                # Avança as batidas do "dia seguinte" em 1 dia
-                parte_seguinte = parte_seguinte + pd.Timedelta(days=1)
-
+                parte_seguinte = batidas.iloc[:i].copy() + pd.Timedelta(days=1)
+                parte_atual    = batidas.iloc[i:].copy()
                 batidas = pd.concat([parte_atual, parte_seguinte]).reset_index(drop=True)
                 break
 
@@ -155,19 +104,16 @@ class Processador:
 
     def _analisar_status(self, batidas_dt: pd.Series, idade: int) -> tuple[list[str], str, str, int]:
         if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
-            batidas_dt = pd.to_datetime(batidas_dt, errors='coerce')
+            batidas_dt = pd.to_datetime(batidas_dt, errors="coerce")
 
         batidas_dt = batidas_dt.dropna()
-
-        # ✅ CORREÇÃO: reordena considerando virada de dia
         batidas_dt = self._corrigir_ordem_noturna(batidas_dt)
-        qtd = len(batidas_dt)
+        qtd        = len(batidas_dt)
 
-        alertas = []
-        duracao_str = "00:00"
+        alertas       = []
+        duracao_str   = "00:00"
         intervalo_str = "0.0"
 
-        # VERIFICAÇÃO MENORES DE IDADE
         if idade < 18:
             for batida in batidas_dt:
                 if batida.hour >= 22 or batida.hour < 5:
@@ -178,96 +124,136 @@ class Processador:
             alertas.append("FALTA_DE_MARCACAO")
             return alertas, duracao_str, intervalo_str, idade
 
-        entradas = batidas_dt.iloc[::2].reset_index(drop=True)
-        saidas = batidas_dt.iloc[1::2].reset_index(drop=True)
+        entradas        = batidas_dt.iloc[::2].reset_index(drop=True)
+        saidas          = batidas_dt.iloc[1::2].reset_index(drop=True)
+        total_timedelta = (saidas - entradas).sum()
+        total_segundos  = total_timedelta.total_seconds()
+        duracao_horas   = total_segundos / 3600
 
-        # ✅ Deltas sempre positivos agora (datas corrigidas)
-        deltas = saidas - entradas
-        total_timedelta = deltas.sum()
-
-        total_segundos = total_timedelta.total_seconds()
-        duracao_horas = total_segundos / 3600
-
-        horas_int = int(total_segundos // 3600)
+        horas_int   = int(total_segundos // 3600)
         minutos_int = int((total_segundos % 3600) // 60)
         duracao_str = f"{horas_int:02d}:{minutos_int:02d}"
 
-        # CÁLCULO DO INTERVALO
-        intervalo = 0.0
-
         if qtd == 4:
-            saida_almoco = batidas_dt.iloc[1]
-            volta_almoco = batidas_dt.iloc[2]
-
-            diff_intervalo = volta_almoco - saida_almoco  # ✅ sempre positivo agora
-
-            intervalo = diff_intervalo.total_seconds() / 3600
+            intervalo     = (batidas_dt.iloc[2] - batidas_dt.iloc[1]).total_seconds() / 3600
             intervalo_str = str(round(intervalo, 2))
 
             if intervalo < (50 / 60): alertas.append("INTERVALO_CURTO")
             if intervalo > (70 / 60): alertas.append("INTERVALO_LONGO")
 
-        if 7.35 < duracao_horas < 10:  alertas.append("EXTRA")
-        if duracao_horas > 10:         alertas.append("JORNADA_LONGA")
-        if qtd == 2 and duracao_horas > 6: alertas.append("JORNADA_LONGA_SEM_INTERVALO")
-        if duracao_horas < 4:          alertas.append("JORNADA_CURTA")
-
-        # INTERJORNADA (apenas com 2 batidas — saída e próxima entrada)
-        # (requer contexto externo, não tratado aqui)
+        if 7.35 < duracao_horas < 10:       alertas.append("EXTRA")
+        if duracao_horas > 10:              alertas.append("JORNADA_LONGA")
+        if qtd == 2 and duracao_horas > 6:  alertas.append("JORNADA_LONGA_SEM_INTERVALO")
+        if duracao_horas < 4:               alertas.append("JORNADA_CURTA")
 
         if not alertas:
             alertas.append("OK")
 
         return alertas, duracao_str, intervalo_str, idade
 
+    def _calcular_interjornadas(self, resultados: list[ResultadoJornada]) -> list[ResultadoJornada]:
+        """
+        Para cada funcionário, percorre suas jornadas em ordem cronológica e
+        calcula o tempo entre o fim de uma e o início da próxima.
 
+        A interjornada é atribuída à jornada que CHEGA — ou seja, a que sofre
+        a consequência de ter descansado menos que o mínimo legal.
+
+        Jornadas com FALTA_DE_MARCACAO são ignoradas no cálculo porque não
+        temos a hora de saída real, o que tornaria o resultado inválido.
+        """
+        # Agrupa por funcionário preservando a ordem de inserção (já cronológica)
+        jornadas_por_funcionario: dict[str, list[ResultadoJornada]] = {}
+        for resultado in resultados:
+            jornadas_por_funcionario.setdefault(resultado.chapa, []).append(resultado)
+
+        for chapa, jornadas in jornadas_por_funcionario.items():
+            # Ordena pelo datetime de início para garantir sequência correta
+            jornadas.sort(key=lambda j: j.data_inicio_obj)
+
+            for i in range(1, len(jornadas)):
+                jornada_anterior = jornadas[i - 1]
+                jornada_atual    = jornadas[i]
+
+                # Não calcula se a jornada anterior tem falta de marcação —
+                # sem saída real não é possível saber quando terminou
+                if "FALTA_DE_MARCACAO" in jornada_anterior.status:
+                    continue
+
+                # Reconstrói o datetime da última batida da jornada anterior
+                # a partir da duração, somando ao início
+                try:
+                    h, m = map(int, jornada_anterior.duracao.split(":"))
+                    fim_jornada_anterior = (
+                        jornada_anterior.data_inicio_obj + pd.Timedelta(hours=h, minutes=m)
+                    )
+                except:
+                    continue
+
+                inicio_jornada_atual  = jornada_atual.data_inicio_obj
+                minutos_interjornada  = int(
+                    (inicio_jornada_atual - fim_jornada_anterior).total_seconds() / 60
+                )
+
+                # Só registra interjornadas positivas — negativo indica dado inconsistente
+                if minutos_interjornada < 0:
+                    continue
+
+                jornada_atual.minutos_interjornada = minutos_interjornada
+
+                if minutos_interjornada < MINUTOS_INTERJORNADA_MINIMA:
+                    if "INTERJORNADA_IRREGULAR" not in jornada_atual.status:
+                        # Remove OK se estava lá, pois agora há irregularidade
+                        jornada_atual.status = [
+                            s for s in jornada_atual.status if s != "OK"
+                        ]
+                        jornada_atual.status.append("INTERJORNADA_IRREGULAR")
+
+        return resultados
 
     def executar_analise(self, data_inicio_filtro=None, data_fim_filtro=None) -> list[ResultadoJornada]:
         self._preparar_timeline()
         self._segmentar_jornadas()
 
-        resultados = []
-        grupos = self.df.groupby("ID_JORNADA")
-
         filtro_inicio = pd.Timestamp(pd.to_datetime(data_inicio_filtro)) if data_inicio_filtro else None
+        filtro_fim    = (
+            pd.Timestamp(pd.to_datetime(data_fim_filtro)) + pd.Timedelta(days=1)
+            if data_fim_filtro else None
+        )
 
-        # Filtro de Fim com +1 dia (para pegar o dia final completo)
-        if data_fim_filtro:
-            filtro_fim = pd.Timestamp(pd.to_datetime(data_fim_filtro)) + pd.Timedelta(days=1)
-        else:
-            filtro_fim = None
-
-        for id_jornada, dados in grupos:
-            batidas_dt = dados["DATETIME"]
+        resultados = []
+        for id_jornada, dados in self.df.groupby("ID_JORNADA"):
+            batidas_dt      = dados["DATETIME"]
             primeira_batida = batidas_dt.iloc[0]
-            idade_colaborador = dados["IDADE"].iloc[0]
-            loja = dados["LOJA"].iloc[0]
-            chapa = dados["CHAPA"].iloc[0]
 
-            # Filtros de Data
             if filtro_inicio is not None and primeira_batida < filtro_inicio: continue
-            if filtro_fim is not None and primeira_batida >= filtro_fim: continue
+            if filtro_fim    is not None and primeira_batida >= filtro_fim:   continue
 
-            batidas_texto = []
-            dia_ref = primeira_batida.day
-            for b in batidas_dt:
-                fmt = b.strftime("%H:%M") if b.day == dia_ref else b.strftime("(%d) %H:%M")
-                batidas_texto.append(fmt)
+            dia_ref       = primeira_batida.day
+            batidas_texto = [
+                b.strftime("%H:%M") if b.day == dia_ref else b.strftime("(%d) %H:%M")
+                for b in batidas_dt
+            ]
 
-            status, duracao, intervalo, idade = self._analisar_status(batidas_dt, idade_colaborador)
+            status, duracao, intervalo, idade = self._analisar_status(
+                batidas_dt, dados["IDADE"].iloc[0]
+            )
 
             resultados.append(ResultadoJornada(
-                id_jornada=id_jornada,
-                nome=dados["NOME"].iloc[0],
-                chapa = chapa,
-                idade = idade,
-                loja = loja,
-                data_inicio_obj=primeira_batida,
-                data_inicio_str=primeira_batida.strftime("%Y-%m-%d"),
-                batidas=batidas_texto,
-                status=status,
-                duracao=duracao,
-                intervalo=intervalo
+                id_jornada       = id_jornada,
+                nome             = dados["NOME"].iloc[0],
+                chapa            = dados["CHAPA"].iloc[0],
+                idade            = idade,
+                loja             = dados["LOJA"].iloc[0],
+                data_inicio_obj  = primeira_batida,
+                data_inicio_str  = primeira_batida.strftime("%Y-%m-%d"),
+                batidas          = batidas_texto,
+                status           = status,
+                duracao          = duracao,
+                intervalo        = intervalo,
             ))
+
+        # Calcula interjornadas após ter todas as jornadas do período montadas
+        resultados = self._calcular_interjornadas(resultados)
 
         return resultados

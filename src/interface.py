@@ -14,8 +14,8 @@ from src.database import BancoDeDados
 from src.view_dashboard import DashboardWindow
 
 
-OPCAO_TODAS = "Todas as lojas"
-OPCAO_TODOS = "Todos os meses"
+OPCAO_TODAS_LOJAS = "Todas as lojas"
+OPCAO_TODOS_MESES = "Todos os meses"
 
 
 class AppPonto(ctk.CTk):
@@ -51,62 +51,52 @@ class AppPonto(ctk.CTk):
 
         ctk.CTkButton(
             self.sidebar_frame, text="Processar Ponto",
-            command=self._ir_para_home
+            command=self._navegar_para_home
         ).grid(row=1, column=0, padx=20, pady=10)
 
         ctk.CTkButton(
             self.sidebar_frame, text="Dashboard",
             fg_color="#8A2BE2", hover_color="#4B0082",
-            command=self.abrir_dashboard
+            command=self.abrir_tela_dashboard
         ).grid(row=2, column=0, padx=20, pady=10)
 
-        # ── Separador visual ──────────────────────────────────────────────────
-        # Criado aqui mas inserido no grid só quando o dashboard abre
-        self.sep = ctk.CTkFrame(self.sidebar_frame, height=1, fg_color="#444")
+        # Separador — inserido no grid apenas quando o dashboard estiver aberto
+        self.separador_sidebar = ctk.CTkFrame(self.sidebar_frame, height=1, fg_color="#444")
 
-        # ── Bloco de filtros ──────────────────────────────────────────────────
-        self.filtros_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        # ── Painel de filtros — oculto até o dashboard ser aberto ─────────────
+        self.painel_filtros = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
 
         ctk.CTkLabel(
-            self.filtros_frame, text="FILTROS",
+            self.painel_filtros, text="FILTROS",
             font=ctk.CTkFont(size=12, weight="bold"), text_color="#aaa"
         ).pack(anchor="w", padx=16, pady=(12, 6))
 
-        # Seletor de Loja
-        ctk.CTkLabel(
-            self.filtros_frame, text="Loja", font=("Roboto", 11)
-        ).pack(anchor="w", padx=16)
-
-        self.var_loja = ctk.StringVar(value=OPCAO_TODAS)
-        self.opt_loja = ctk.CTkOptionMenu(
-            self.filtros_frame,
-            variable=self.var_loja,
-            values=[OPCAO_TODAS],
-            width=178,
-            # SEM command — não atualiza automaticamente
+        ctk.CTkLabel(self.painel_filtros, text="Loja",
+                     font=("Roboto", 11)).pack(anchor="w", padx=16)
+        self.var_loja_selecionada = ctk.StringVar(value=OPCAO_TODAS_LOJAS)
+        self.seletor_loja = ctk.CTkOptionMenu(
+            self.painel_filtros,
+            variable=self.var_loja_selecionada,
+            values=[OPCAO_TODAS_LOJAS],
+            width=178
         )
-        self.opt_loja.pack(padx=16, pady=(4, 12))
+        self.seletor_loja.pack(padx=16, pady=(4, 12))
 
-        # Seletor de Mês/Ano
-        ctk.CTkLabel(
-            self.filtros_frame, text="Mês / Ano", font=("Roboto", 11)
-        ).pack(anchor="w", padx=16)
-
-        self.var_mes = ctk.StringVar(value=OPCAO_TODOS)
-        self.opt_mes = ctk.CTkOptionMenu(
-            self.filtros_frame,
-            variable=self.var_mes,
-            values=[OPCAO_TODOS],
-            width=178,
-            # SEM command — não atualiza automaticamente
+        ctk.CTkLabel(self.painel_filtros, text="Mês / Ano",
+                     font=("Roboto", 11)).pack(anchor="w", padx=16)
+        self.var_mes_selecionado = ctk.StringVar(value=OPCAO_TODOS_MESES)
+        self.seletor_mes = ctk.CTkOptionMenu(
+            self.painel_filtros,
+            variable=self.var_mes_selecionado,
+            values=[OPCAO_TODOS_MESES],
+            width=178
         )
-        self.opt_mes.pack(padx=16, pady=(4, 12))
+        self.seletor_mes.pack(padx=16, pady=(4, 12))
 
-        # Botão Aplicar — único gatilho de atualização
         ctk.CTkButton(
-            self.filtros_frame, text="Aplicar Filtros",
+            self.painel_filtros, text="Aplicar Filtros",
             fg_color="#8A2BE2", hover_color="#4B0082",
-            command=self._aplicar_filtros
+            command=self._aplicar_filtros_e_recarregar
         ).pack(padx=16, pady=(0, 16), fill="x")
 
         # ── Container principal ───────────────────────────────────────────────
@@ -129,50 +119,63 @@ class AppPonto(ctk.CTk):
     def show_frame(self, page_name):
         self.frames[page_name].tkraise()
 
-    def _ir_para_home(self):
-        self._esconder_filtros_sidebar()
+    def _navegar_para_home(self):
+        self._ocultar_painel_de_filtros()
         self.show_frame("Home")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # VISIBILIDADE DOS FILTROS
+    # PAINEL DE FILTROS DA SIDEBAR
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _mostrar_filtros_sidebar(self):
-        self.sep.grid(row=3, column=0, padx=16, pady=(5, 0), sticky="ew")
-        self.filtros_frame.grid(row=4, column=0, sticky="nsew")
+    def _exibir_painel_de_filtros(self):
+        self.separador_sidebar.grid(row=3, column=0, padx=16, pady=(5, 0), sticky="ew")
+        self.painel_filtros.grid(row=4, column=0, sticky="nsew")
 
-    def _esconder_filtros_sidebar(self):
-        self.sep.grid_remove()
-        self.filtros_frame.grid_remove()
+    def _ocultar_painel_de_filtros(self):
+        self.separador_sidebar.grid_remove()
+        self.painel_filtros.grid_remove()
 
-    def _popular_filtros(self, filtros: dict):
-        lojas = [OPCAO_TODAS] + filtros.get("lojas", [])
-        meses = [OPCAO_TODOS] + filtros.get("meses", [])
+    def _preencher_opcoes_de_filtro(self, filtros_disponiveis: dict):
+        lojas = [OPCAO_TODAS_LOJAS] + filtros_disponiveis.get("lojas", [])
+        meses = [OPCAO_TODOS_MESES] + filtros_disponiveis.get("meses", [])
 
-        self.opt_loja.configure(values=lojas)
-        self.opt_mes.configure(values=meses)
+        self.seletor_loja.configure(values=lojas)
+        self.seletor_mes.configure(values=meses)
 
-        if self.var_loja.get() not in lojas:
-            self.var_loja.set(OPCAO_TODAS)
-        if self.var_mes.get() not in meses:
-            self.var_mes.set(OPCAO_TODOS)
+        if self.var_loja_selecionada.get() not in lojas:
+            self.var_loja_selecionada.set(OPCAO_TODAS_LOJAS)
+        if self.var_mes_selecionado.get() not in meses:
+            self.var_mes_selecionado.set(OPCAO_TODOS_MESES)
+
+    def _aplicar_filtros_e_recarregar(self):
+        loja    = self.var_loja_selecionada.get()
+        mes_ano = self.var_mes_selecionado.get()
+
+        loja_param    = None if loja    == OPCAO_TODAS_LOJAS else loja
+        mes_ano_param = None if mes_ano == OPCAO_TODOS_MESES else mes_ano
+
+        dados = BancoDeDados().buscar_dados_dashboard(loja=loja_param, mes_ano=mes_ano_param)
+        self._reconstruir_tela_dashboard(dados)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # APLICAR FILTROS — acionado APENAS pelo botão
+    # DASHBOARD
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _aplicar_filtros(self):
-        loja    = self.var_loja.get()
-        mes_ano = self.var_mes.get()
+    def abrir_tela_dashboard(self):
+        banco                = BancoDeDados()
+        filtros_disponiveis  = banco.buscar_filtros_disponiveis()
 
-        loja_param    = None if loja    == OPCAO_TODAS else loja
-        mes_ano_param = None if mes_ano == OPCAO_TODOS else mes_ano
+        if not filtros_disponiveis["lojas"] and not filtros_disponiveis["meses"]:
+            messagebox.showwarning(
+                "Vazio", "Processe algum arquivo primeiro para alimentar o banco de dados!"
+            )
+            return
 
-        banco = BancoDeDados()
-        dados = banco.obter_dados_dashboard(loja=loja_param, mes_ano=mes_ano_param)
-        self._reconstruir_dashboard(dados)
+        self._preencher_opcoes_de_filtro(filtros_disponiveis)
+        self._exibir_painel_de_filtros()
+        self._reconstruir_tela_dashboard(banco.buscar_dados_dashboard())
 
-    def _reconstruir_dashboard(self, dados):
+    def _reconstruir_tela_dashboard(self, dados):
         if "Dashboard" in self.frames:
             self.frames["Dashboard"].destroy()
 
@@ -181,26 +184,6 @@ class AppPonto(ctk.CTk):
         )
         self.frames["Dashboard"].grid(row=0, column=0, sticky="nsew")
         self.show_frame("Dashboard")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # ABRIR DASHBOARD
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def abrir_dashboard(self):
-        banco   = BancoDeDados()
-        filtros = banco.obter_filtros_disponiveis()
-
-        if not filtros["lojas"] and not filtros["meses"]:
-            messagebox.showwarning(
-                "Vazio", "Processe algum arquivo primeiro para alimentar o banco de dados!"
-            )
-            return
-
-        self._popular_filtros(filtros)
-        self._mostrar_filtros_sidebar()
-
-        dados = banco.obter_dados_dashboard()
-        self._reconstruir_dashboard(dados)
 
     # ─────────────────────────────────────────────────────────────────────────
     # UTILITÁRIOS
@@ -272,7 +255,7 @@ class HomeFrame(ctk.CTkFrame):
 
         self.btn_gerar_revisao = ctk.CTkButton(
             frame_etapa1, text="GERAR PLANILHA DE REVISÃO",
-            command=self.iniciar_etapa1, state="disabled", height=45)
+            command=self.iniciar_geracao_planilha_revisao, state="disabled", height=45)
         self.btn_gerar_revisao.pack(padx=12, pady=(0, 12), fill="x")
 
         frame_etapa2 = ctk.CTkFrame(self, border_width=1, border_color="#444")
@@ -286,7 +269,7 @@ class HomeFrame(ctk.CTkFrame):
 
         self.btn_confirmar = ctk.CTkButton(
             frame_etapa2, text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR",
-            command=self.iniciar_etapa2, state="disabled", height=45,
+            command=self.iniciar_geracao_relatorio_final, state="disabled", height=45,
             fg_color="#1a7a1a", hover_color="#145214")
         self.btn_confirmar.pack(padx=12, pady=(0, 12), fill="x")
 
@@ -314,9 +297,9 @@ class HomeFrame(ctk.CTkFrame):
             self.btn_gerar_revisao.configure(state="normal")
 
     def log(self, mensagem):
-        self.after(0, self._atualizar_log_ui, mensagem)
+        self.after(0, self._escrever_no_log, mensagem)
 
-    def _atualizar_log_ui(self, mensagem):
+    def _escrever_no_log(self, mensagem):
         self.txt_log.insert("end", f"> {mensagem}\n")
         self.txt_log.see("end")
 
@@ -327,17 +310,19 @@ class HomeFrame(ctk.CTkFrame):
             return None
 
     def abrir_pasta_saida(self):
-        caminho_pasta = os.path.abspath("data/output")
-        os.makedirs(caminho_pasta, exist_ok=True)
-        os.startfile(caminho_pasta)
+        caminho = os.path.abspath("data/output")
+        os.makedirs(caminho, exist_ok=True)
+        os.startfile(caminho)
 
-    def iniciar_etapa1(self):
-        data_ini_iso = data_fim_iso = None
+    # ── ETAPA 1 ───────────────────────────────────────────────────────────────
+
+    def iniciar_geracao_planilha_revisao(self):
+        dt_ini = dt_fim = None
 
         if self.chk_usar_filtro.get() == 1:
-            data_ini_iso = self.converter_data_br_para_iso(self.entry_inicio.get())
-            data_fim_iso = self.converter_data_br_para_iso(self.entry_fim.get())
-            if not data_ini_iso or not data_fim_iso:
+            dt_ini = self.converter_data_br_para_iso(self.entry_inicio.get())
+            dt_fim = self.converter_data_br_para_iso(self.entry_fim.get())
+            if not dt_ini or not dt_fim:
                 messagebox.showwarning("Formato Inválido", "Use DD/MM/AAAA\nEx: 01/01/2024")
                 return
             self.log(f"Filtro ativado: De {self.entry_inicio.get()} até {self.entry_fim.get()}")
@@ -346,17 +331,17 @@ class HomeFrame(ctk.CTkFrame):
 
         self.btn_gerar_revisao.configure(state="disabled", text="Processando...")
         self.btn_confirmar.configure(state="disabled")
-        threading.Thread(target=self._rodar_etapa1, args=(data_ini_iso, data_fim_iso)).start()
+        threading.Thread(
+            target=self._executar_geracao_planilha_revisao, args=(dt_ini, dt_fim)
+        ).start()
 
-    def _rodar_etapa1(self, dt_ini, dt_fim):
+    def _executar_geracao_planilha_revisao(self, dt_ini, dt_fim):
         try:
             self.log("Lendo arquivo Excel...")
-            loader = ExcelLoader(self.arquivo_selecionado)
-            df     = loader.carregar()
+            df = ExcelLoader(self.arquivo_selecionado).carregar()
 
             self.log("Segmentando jornadas...")
-            processador = Processador(df)
-            resultados  = processador.executar_analise(
+            resultados = Processador(df).executar_analise(
                 data_inicio_filtro=dt_ini, data_fim_filtro=dt_fim)
 
             if not resultados:
@@ -367,43 +352,45 @@ class HomeFrame(ctk.CTkFrame):
                 return
 
             self.log(f"Gerando planilha de revisão com {len(resultados)} jornadas...")
-            reporter = ExcelReporterRevisao()
-            reporter.gerar_excel_revisao(resultados)
+            ExcelReporterRevisao().gerar_excel_revisao(resultados)
 
-            self.log("✅ Planilha de revisão gerada! Corrija os agrupamentos e clique em 'Revisão Concluída'.")
-            self.after(0, self._finalizar_etapa1)
+            self.log("✅ Planilha gerada! Corrija os agrupamentos e clique em 'Revisão Concluída'.")
+            self.after(0, self._finalizar_geracao_planilha_revisao)
 
         except PermissionError:
             self.log("❌ ERRO: Feche o arquivo Excel e tente novamente.")
             self.after(0, lambda: self.btn_gerar_revisao.configure(
                 state="normal", text="GERAR PLANILHA DE REVISÃO"))
         except Exception as e:
-            self.log(f"❌ ERRO: {str(e)}")
+            self.log(f"❌ ERRO: {e}")
             self.after(0, lambda: self.btn_gerar_revisao.configure(
                 state="normal", text="TENTAR NOVAMENTE"))
 
-    def _finalizar_etapa1(self):
+    def _finalizar_geracao_planilha_revisao(self):
         self.btn_gerar_revisao.configure(state="normal", text="GERAR NOVAMENTE")
         self.btn_confirmar.configure(state="normal")
         self.btn_abrir_pasta.pack(pady=(0, 5))
 
-    def iniciar_etapa2(self):
-        caminho = ExcelReporterRevisao.caminho_revisao()
-        if not os.path.exists(caminho):
+    # ── ETAPA 2 ───────────────────────────────────────────────────────────────
+
+    def iniciar_geracao_relatorio_final(self):
+        caminho_revisao = ExcelReporterRevisao.caminho_revisao()
+        if not os.path.exists(caminho_revisao):
             messagebox.showerror(
                 "Arquivo não encontrado",
-                f"Planilha de revisão não localizada:\n{caminho}\n\nExecute a Etapa 1 primeiro."
+                f"Planilha de revisão não localizada:\n{caminho_revisao}\n\nExecute a Etapa 1 primeiro."
             )
             return
 
         self.btn_confirmar.configure(state="disabled", text="Processando...")
-        threading.Thread(target=self._rodar_etapa2, args=(caminho,)).start()
+        threading.Thread(
+            target=self._executar_geracao_relatorio_final, args=(caminho_revisao,)
+        ).start()
 
-    def _rodar_etapa2(self, caminho: str):
+    def _executar_geracao_relatorio_final(self, caminho_revisao: str):
         try:
             self.log("Relendo planilha de revisão...")
-            leitor     = LeitorRevisao()
-            resultados = leitor.carregar_e_recalcular(caminho)
+            resultados = LeitorRevisao().carregar_e_recalcular(caminho_revisao)
 
             if not resultados:
                 self.log("⚠️ Nenhuma jornada encontrada na planilha de revisão.")
@@ -412,26 +399,24 @@ class HomeFrame(ctk.CTkFrame):
                 return
 
             self.log(f"Calculadas {len(resultados)} jornadas. Salvando no banco...")
-            banco = BancoDeDados()
-            banco.salvar_jornadas(resultados)
+            BancoDeDados().salvar_jornadas(resultados)
 
-            self.log("Gerando relatório final com abas...")
-            reporter = ExcelReporter()
-            reporter.gerar_relatorio_excel(resultados, "Relatorio_Final.xlsx")
+            self.log("Gerando relatório final...")
+            ExcelReporter().gerar_relatorio_excel(resultados, "Relatorio_Final.xlsx")
 
-            self.log("✅ SUCESSO! Relatório gerado e dados salvos no banco.")
-            self.after(0, self._finalizar_etapa2)
+            self.log("✅ SUCESSO! Relatório gerado e dados salvos.")
+            self.after(0, self._finalizar_geracao_relatorio_final)
 
         except PermissionError:
             self.log("❌ ERRO: Feche o arquivo Excel e tente novamente.")
             self.after(0, lambda: self.btn_confirmar.configure(
                 state="normal", text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR"))
         except Exception as e:
-            self.log(f"❌ ERRO: {str(e)}")
+            self.log(f"❌ ERRO: {e}")
             self.after(0, lambda: self.btn_confirmar.configure(
                 state="normal", text="TENTAR NOVAMENTE"))
 
-    def _finalizar_etapa2(self):
+    def _finalizar_geracao_relatorio_final(self):
         self.btn_confirmar.configure(
             state="normal", text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR")
 
