@@ -1,6 +1,6 @@
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox, filedialog
 import threading
 import os
 from datetime import datetime
@@ -8,8 +8,11 @@ from datetime import datetime
 from src.loader import ExcelLoader
 from src.processador import Processador
 from src.reporter import ExcelReporter
+from src.reporter_revisao import ExcelReporterRevisao
+from src.leitor_revisao import LeitorRevisao
 from src.database import BancoDeDados
 from src.view_dashboard import DashboardWindow
+
 
 class AppPonto(ctk.CTk):
     def __init__(self):
@@ -17,58 +20,42 @@ class AppPonto(ctk.CTk):
 
         self.bind("<Control-r>", lambda e: self.reiniciar())
 
-        # 1. Defina o tamanho da janela que você quer
         largura_janela = 1000
-        altura_janela = 900
-
-        # 2. Pegue a resolução do monitor do usuário
-        largura_tela = self.winfo_screenwidth()
-        altura_tela = self.winfo_screenheight()
-
-        # 3. Calcule a posição (X e Y)
-        # Para ficar na direita: Largura total da tela menos a largura da janela
+        altura_janela  = 900
+        largura_tela   = self.winfo_screenwidth()
+        altura_tela    = self.winfo_screenheight()
         pos_x = largura_tela - largura_janela
-        # Para centralizar na vertical: Metade da tela menos metade da janela
         pos_y = (altura_tela // 2) - (altura_janela // 2)
-
-        # 4. Aplica a geometria: "LarguraxAltura+X+Y"
         self.geometry(f"{largura_janela}x{altura_janela}+{pos_x}+{pos_y}")
 
         self.title("Tempus - Time & Agility")
         ctk.set_appearance_mode("Dark")
 
-        # --- Configuração de Grid Principal ---
-        # Coluna 0: Sidebar (fixa) | Coluna 1: Conteúdo (expansível)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         # --- Sidebar ---
         self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(4, weight=1)  # Espaçador inferior
+        self.sidebar_frame.grid_rowconfigure(4, weight=1)
 
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="TEMPUS", font=ctk.CTkFont(size=20, weight="bold"))
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+        ctk.CTkLabel(self.sidebar_frame, text="TEMPUS",
+                     font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 10))
 
-        self.btn_nav_home = ctk.CTkButton(self.sidebar_frame, text="Processar Ponto",
-                                          command=lambda: self.show_frame("Home"))
-        self.btn_nav_home.grid(row=1, column=0, padx=20, pady=10)
+        ctk.CTkButton(self.sidebar_frame, text="Processar Ponto",
+                      command=lambda: self.show_frame("Home")).grid(row=1, column=0, padx=20, pady=10)
 
-        self.btn_nav_dash = ctk.CTkButton(self.sidebar_frame, text="Dashboard",
-                                          fg_color="#8A2BE2", hover_color="#4B0082",
-                                          command=self.abrir_dashboard)
-        self.btn_nav_dash.grid(row=2, column=0, padx=20, pady=10)
+        ctk.CTkButton(self.sidebar_frame, text="Dashboard",
+                      fg_color="#8A2BE2", hover_color="#4B0082",
+                      command=self.abrir_dashboard).grid(row=2, column=0, padx=20, pady=10)
 
-        # --- Container de Conteúdo ---
+        # --- Container ---
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         self.container.grid_columnconfigure(0, weight=1)
         self.container.grid_rowconfigure(0, weight=1)
 
-        # Dicionário de frames
         self.frames = {}
-
-        # Instanciando a tela principal (seu código original vai aqui dentro)
         self.frames["Home"] = HomeFrame(parent=self.container, controller=self)
         self.frames["Home"].grid(row=0, column=0, sticky="nsew")
 
@@ -77,7 +64,6 @@ class AppPonto(ctk.CTk):
 
     def reiniciar(self, event=None):
         self.destroy()
-        import os
         import sys
         os.startfile(sys.argv[0])
 
@@ -88,29 +74,22 @@ class AppPonto(ctk.CTk):
             if os.path.exists(caminho_icone):
                 self.icone_img = tk.PhotoImage(file=caminho_icone)
                 self.iconphoto(False, self.icone_img)
-        except:
+        except Exception:
             pass
 
     def show_frame(self, page_name):
-        frame = self.frames[page_name]
-        frame.tkraise()
+        self.frames[page_name].tkraise()
 
     def abrir_dashboard(self):
-
         banco = BancoDeDados()
         dados = banco.obter_dados_dashboard()
-
         if not dados:
             messagebox.showwarning("Vazio", "Processe algum arquivo primeiro para alimentar o banco de dados!")
             return
-
         if "Dashboard" in self.frames:
             self.frames["Dashboard"].destroy()
-
         self.frames["Dashboard"] = DashboardWindow(parent=self.container, controller=self, dados=dados)
         self.frames["Dashboard"].grid(row=0, column=0, sticky="nsew")
-
-        # 3. Alternamos a visualização
         self.show_frame("Dashboard")
 
 
@@ -120,53 +99,82 @@ class HomeFrame(ctk.CTkFrame):
         self.controller = controller
         self.arquivo_selecionado = None
 
-        # 1. Título
-        self.lbl_titulo = ctk.CTkLabel(self, text="Tratamento de Ponto Eletrônico", font=("Roboto", 24, "bold"))
-        self.lbl_titulo.pack(pady=(10, 20))
+        # ── Título ────────────────────────────────────────────────────────────
+        ctk.CTkLabel(self, text="Tratamento de Ponto Eletrônico",
+                     font=("Roboto", 24, "bold")).pack(pady=(10, 20))
 
-        # 2. Área de Seleção de Arquivo
-        self.frame_arquivo = ctk.CTkFrame(self)
-        self.frame_arquivo.pack(pady=5, fill="x")
+        # ── Seleção de Arquivo ────────────────────────────────────────────────
+        frame_arquivo = ctk.CTkFrame(self)
+        frame_arquivo.pack(pady=5, fill="x")
 
-        self.btn_selecionar = ctk.CTkButton(self.frame_arquivo, text="Selecionar Excel (.xlsx)",
-                                            command=self.selecionar_arquivo)
-        self.btn_selecionar.pack(side="left", padx=10, pady=10)
+        ctk.CTkButton(frame_arquivo, text="Selecionar Excel (.xlsx)",
+                      command=self.selecionar_arquivo).pack(side="left", padx=10, pady=10)
 
-        self.lbl_arquivo = ctk.CTkLabel(self.frame_arquivo, text="Nenhum arquivo selecionado", text_color="gray")
+        self.lbl_arquivo = ctk.CTkLabel(frame_arquivo, text="Nenhum arquivo selecionado",
+                                        text_color="gray")
         self.lbl_arquivo.pack(side="left", padx=10)
 
-        # 3. Área de Filtro de Datas
-        self.frame_datas = ctk.CTkFrame(self)
-        self.frame_datas.pack(pady=10, fill="x")
+        # ── Filtro de Datas ───────────────────────────────────────────────────
+        frame_datas = ctk.CTkFrame(self)
+        frame_datas.pack(pady=10, fill="x")
 
-        self.chk_usar_filtro = ctk.CTkCheckBox(self.frame_datas, text="Filtrar por Período Específico",
+        self.chk_usar_filtro = ctk.CTkCheckBox(frame_datas, text="Filtrar por Período Específico",
                                                command=self.toggle_datas)
         self.chk_usar_filtro.pack(pady=10, anchor="w", padx=10)
 
-        self.subframe_inputs = ctk.CTkFrame(self.frame_datas, fg_color="transparent")
-        self.subframe_inputs.pack(fill="x", padx=10, pady=(0, 10))
+        subframe = ctk.CTkFrame(frame_datas, fg_color="transparent")
+        subframe.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.entry_inicio = ctk.CTkEntry(self.subframe_inputs, placeholder_text="DD/MM/AAAA", width=120)
+        self.entry_inicio = ctk.CTkEntry(subframe, placeholder_text="DD/MM/AAAA", width=120)
         self.entry_inicio.pack(side="left", padx=5)
 
-        self.entry_fim = ctk.CTkEntry(self.subframe_inputs, placeholder_text="DD/MM/AAAA", width=120)
+        self.entry_fim = ctk.CTkEntry(subframe, placeholder_text="DD/MM/AAAA", width=120)
         self.entry_fim.pack(side="left", padx=5)
 
-        #BOTÃO PROCESSAR
-        self.btn_processar = ctk.CTkButton(self, text="PROCESSAR RELATÓRIO",
-                                           command=self.iniciar_processamento,
-                                           state="disabled", height=50)
-        self.btn_processar.pack(pady=20, fill="x")
+        # ── ETAPA 1 ───────────────────────────────────────────────────────────
+        frame_etapa1 = ctk.CTkFrame(self, border_width=1, border_color="#444")
+        frame_etapa1.pack(fill="x", pady=(10, 5))
 
-        #BOTÃO ABRIR PASTA
-        self.btn_abrir_pasta = ctk.CTkButton(self, text="Abrir Pasta de Relatórios", command=self.abrir_pasta_saida,
-                                             fg_color="green", hover_color="darkgreen")
+        ctk.CTkLabel(frame_etapa1, text="ETAPA 1 — Gerar Planilha de Revisão",
+                     font=("Roboto", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
+        ctk.CTkLabel(frame_etapa1,
+                     text="Segmenta as jornadas e gera um Excel para revisão. Corrija agrupamentos antes de confirmar.",
+                     text_color="gray", font=("Roboto", 11)).pack(anchor="w", padx=12, pady=(0, 6))
 
-        #LOG
+        self.btn_gerar_revisao = ctk.CTkButton(
+            frame_etapa1, text="GERAR PLANILHA DE REVISÃO",
+            command=self.iniciar_etapa1, state="disabled", height=45)
+        self.btn_gerar_revisao.pack(padx=12, pady=(0, 12), fill="x")
+
+        # ── ETAPA 2 ───────────────────────────────────────────────────────────
+        frame_etapa2 = ctk.CTkFrame(self, border_width=1, border_color="#444")
+        frame_etapa2.pack(fill="x", pady=(5, 10))
+
+        ctk.CTkLabel(frame_etapa2, text="ETAPA 2 — Confirmar e Gerar Relatório Final",
+                     font=("Roboto", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 2))
+        ctk.CTkLabel(frame_etapa2,
+                     text="Após revisar a planilha, clique aqui para calcular, gerar o relatório e salvar no banco.",
+                     text_color="gray", font=("Roboto", 11)).pack(anchor="w", padx=12, pady=(0, 6))
+
+        self.btn_confirmar = ctk.CTkButton(
+            frame_etapa2, text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR",
+            command=self.iniciar_etapa2, state="disabled", height=45,
+            fg_color="#1a7a1a", hover_color="#145214")
+        self.btn_confirmar.pack(padx=12, pady=(0, 12), fill="x")
+
+        # ── Botão Abrir Pasta (aparece após Etapa 1) ──────────────────────────
+        self.btn_abrir_pasta = ctk.CTkButton(
+            self, text="Abrir Pasta de Relatórios",
+            command=self.abrir_pasta_saida,
+            fg_color="green", hover_color="darkgreen")
+
+        # ── Log ───────────────────────────────────────────────────────────────
         self.txt_log = ctk.CTkTextbox(self, height=200)
         self.txt_log.pack(pady=5, fill="x")
+
         self.toggle_datas()
 
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def toggle_datas(self):
         state = "normal" if self.chk_usar_filtro.get() == 1 else "disabled"
@@ -177,82 +185,11 @@ class HomeFrame(ctk.CTkFrame):
         caminho = filedialog.askopenfilename(filetypes=[("Arquivos Excel", "*.xlsx")])
         if caminho:
             self.arquivo_selecionado = caminho
-            self.lbl_arquivo.configure(text=f"Selecionado: {os.path.basename(caminho)}", text_color="white")
-            self.btn_processar.configure(state="normal")
-
-    def iniciar_processamento(self):
-        data_ini_iso = None
-        data_fim_iso = None
-
-        if self.chk_usar_filtro.get() == 1:
-            ini_txt = self.entry_inicio.get()
-            fim_txt = self.entry_fim.get()
-            data_ini_iso = self.converter_data_br_para_iso(ini_txt)
-            data_fim_iso = self.converter_data_br_para_iso(fim_txt)
-
-            if not data_ini_iso or not data_fim_iso:
-                messagebox.showwarning("Formato Inválido", "Use DD/MM/AAAA\nEx: 01/01/2024")
-                return
-            self.log(f"Filtro ativado: De {ini_txt} até {fim_txt}")
-        else:
-            self.log("Processando todo o período...")
-
-        self.btn_processar.configure(state="disabled", text="Processando...")
-        thread = threading.Thread(target=self.rodar_logica_backend, args=(data_ini_iso, data_fim_iso))
-        thread.start()
-
-    def rodar_logica_backend(self, dt_ini, dt_fim):
-        try:
-            self.log("Lendo arquivo Excel...")
-            loader = ExcelLoader(self.arquivo_selecionado)
-            df = loader.carregar()
-
-            self.log("Calculando jornadas...")
-            processador = Processador(df)
-            resultados = processador.executar_analise(data_inicio_filtro=dt_ini, data_fim_filtro=dt_fim)
-
-            if not resultados:
-                self.log("⚠️ ATENÇÃO: Nenhum dado encontrado!")
-                messagebox.showwarning("Vazio", "Nenhuma jornada encontrada para este período.")
-                self.finalizar_sucesso()
-                return
-
-            # SALVA NO BANCO
-            self.log("Salvando no Histórico...")
-            banco = BancoDeDados()
-            banco.salvar_jornadas(resultados)
-
-            # GERA EXCEL
-            self.log(f"Gerando relatório com {len(resultados)} jornadas...")
-            reporter = ExcelReporter()
-
-            nome_arquivo = "Relatorio_Final.xlsx"
-            if dt_ini:
-                nome_arquivo = f"Relatorio_{dt_ini}_ate_{dt_fim}.xlsx"
-
-            reporter.gerar_relatorio_excel(resultados, nome_arquivo)
-
-            self.log("✅ SUCESSO! Relatório gerado.")
-            self.finalizar_sucesso()
-
-        except Exception as e:
-            self.log(f"❌ ERRO: {str(e)}")
-            self.btn_processar.configure(state="normal", text="TENTAR NOVAMENTE")
-
-    def finalizar_sucesso(self):
-        self.btn_processar.configure(state="normal", text="PROCESSAR NOVAMENTE")
-        self.btn_abrir_pasta.pack(pady=10)
-
-    def abrir_pasta_saida(self):
-        # Garante que cria a pasta se ela não existir
-        caminho_pasta = os.path.abspath("data/output")
-        if not os.path.exists(caminho_pasta):
-            os.makedirs(caminho_pasta)
-
-        os.startfile(caminho_pasta)
+            self.lbl_arquivo.configure(text=f"Selecionado: {os.path.basename(caminho)}",
+                                       text_color="white")
+            self.btn_gerar_revisao.configure(state="normal")
 
     def log(self, mensagem):
-        """Escreve no log de forma segura para threads"""
         self.after(0, self._atualizar_log_ui, mensagem)
 
     def _atualizar_log_ui(self, mensagem):
@@ -260,17 +197,125 @@ class HomeFrame(ctk.CTkFrame):
         self.txt_log.see("end")
 
     def converter_data_br_para_iso(self, data_br):
-        """Converte DD/MM/AAAA para YYYY-MM-DD"""
         try:
-            obj_data = datetime.strptime(data_br, "%d/%m/%Y")
-            return obj_data.strftime("%Y-%m-%d")
+            return datetime.strptime(data_br, "%d/%m/%Y").strftime("%Y-%m-%d")
         except ValueError:
             return None
 
-    def finalizar_sucesso(self):
-        """Atualiza a UI após o fim do processamento"""
-        self.after(0, lambda: self.btn_processar.configure(state="normal", text="PROCESSAR NOVAMENTE"))
-        self.after(0, lambda: self.btn_abrir_pasta.pack(pady=10))
+    def abrir_pasta_saida(self):
+        caminho_pasta = os.path.abspath("data/output")
+        os.makedirs(caminho_pasta, exist_ok=True)
+        os.startfile(caminho_pasta)
+
+    # ── ETAPA 1 — Segmentar e gerar Excel de revisão ─────────────────────────
+
+    def iniciar_etapa1(self):
+        data_ini_iso = data_fim_iso = None
+
+        if self.chk_usar_filtro.get() == 1:
+            data_ini_iso = self.converter_data_br_para_iso(self.entry_inicio.get())
+            data_fim_iso = self.converter_data_br_para_iso(self.entry_fim.get())
+            if not data_ini_iso or not data_fim_iso:
+                messagebox.showwarning("Formato Inválido", "Use DD/MM/AAAA\nEx: 01/01/2024")
+                return
+            self.log(f"Filtro ativado: De {self.entry_inicio.get()} até {self.entry_fim.get()}")
+        else:
+            self.log("Processando todo o período...")
+
+        self.btn_gerar_revisao.configure(state="disabled", text="Processando...")
+        self.btn_confirmar.configure(state="disabled")
+        threading.Thread(
+            target=self._rodar_etapa1, args=(data_ini_iso, data_fim_iso)
+        ).start()
+
+    def _rodar_etapa1(self, dt_ini, dt_fim):
+        try:
+            self.log("Lendo arquivo Excel...")
+            loader = ExcelLoader(self.arquivo_selecionado)
+            df = loader.carregar()
+
+            self.log("Segmentando jornadas...")
+            processador = Processador(df)
+            resultados = processador.executar_analise(
+                data_inicio_filtro=dt_ini, data_fim_filtro=dt_fim)
+
+            if not resultados:
+                self.log("⚠️ Nenhum dado encontrado para este período.")
+                messagebox.showwarning("Vazio", "Nenhuma jornada encontrada para este período.")
+                self.after(0, lambda: self.btn_gerar_revisao.configure(
+                    state="normal", text="GERAR PLANILHA DE REVISÃO"))
+                return
+
+            self.log(f"Gerando planilha de revisão com {len(resultados)} jornadas...")
+            reporter = ExcelReporterRevisao()
+            reporter.gerar_excel_revisao(resultados)
+
+            self.log("✅ Planilha de revisão gerada! Corrija os agrupamentos e clique em 'Revisão Concluída'.")
+            self.after(0, self._finalizar_etapa1)
+
+        except PermissionError:
+            self.log("❌ ERRO: Feche o arquivo Excel e tente novamente.")
+            self.after(0, lambda: self.btn_gerar_revisao.configure(
+                state="normal", text="GERAR PLANILHA DE REVISÃO"))
+        except Exception as e:
+            self.log(f"❌ ERRO: {str(e)}")
+            self.after(0, lambda: self.btn_gerar_revisao.configure(
+                state="normal", text="TENTAR NOVAMENTE"))
+
+    def _finalizar_etapa1(self):
+        self.btn_gerar_revisao.configure(state="normal", text="GERAR NOVAMENTE")
+        self.btn_confirmar.configure(state="normal")
+        self.btn_abrir_pasta.pack(pady=(0, 5))
+
+    # ── ETAPA 2 — Reler, calcular, gerar relatório e salvar no banco ──────────
+
+    def iniciar_etapa2(self):
+        caminho = ExcelReporterRevisao.caminho_revisao()
+        if not os.path.exists(caminho):
+            messagebox.showerror(
+                "Arquivo não encontrado",
+                f"Planilha de revisão não localizada:\n{caminho}\n\nExecute a Etapa 1 primeiro."
+            )
+            return
+
+        self.btn_confirmar.configure(state="disabled", text="Processando...")
+        threading.Thread(target=self._rodar_etapa2, args=(caminho,)).start()
+
+    def _rodar_etapa2(self, caminho: str):
+        try:
+            self.log("Relendo planilha de revisão...")
+            leitor = LeitorRevisao()
+            resultados = leitor.carregar_e_recalcular(caminho)
+
+            if not resultados:
+                self.log("⚠️ Nenhuma jornada encontrada na planilha de revisão.")
+                self.after(0, lambda: self.btn_confirmar.configure(
+                    state="normal", text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR"))
+                return
+
+            self.log(f"Calculadas {len(resultados)} jornadas. Salvando no banco...")
+            banco = BancoDeDados()
+            banco.salvar_jornadas(resultados)
+
+            self.log("Gerando relatório final com abas...")
+            reporter = ExcelReporter()
+            reporter.gerar_relatorio_excel(resultados, "Relatorio_Final.xlsx")
+
+            self.log("✅ SUCESSO! Relatório gerado e dados salvos no banco.")
+            self.after(0, self._finalizar_etapa2)
+
+        except PermissionError:
+            self.log("❌ ERRO: Feche o arquivo Excel e tente novamente.")
+            self.after(0, lambda: self.btn_confirmar.configure(
+                state="normal", text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR"))
+        except Exception as e:
+            self.log(f"❌ ERRO: {str(e)}")
+            self.after(0, lambda: self.btn_confirmar.configure(
+                state="normal", text="TENTAR NOVAMENTE"))
+
+    def _finalizar_etapa2(self):
+        self.btn_confirmar.configure(
+            state="normal", text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR")
 
 
 if __name__ == "__main__":

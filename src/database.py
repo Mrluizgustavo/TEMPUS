@@ -33,7 +33,7 @@ class BancoDeDados:
                 qtd_batidas INTEGER,
                 horas_trabalhadas REAL,
                 tempo_intervalo REAL,
-                
+
                 data_processamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                 UNIQUE(chapa, data)
@@ -43,11 +43,11 @@ class BancoDeDados:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS status_jornada(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                
+
                 id_jornada INTEGER NOT NULL,
                 tipo_status TEXT NOT NULL,
                 FOREIGN KEY (id_jornada) REFERENCES jornadas(id) ON DELETE CASCADE                
-                
+
                 )
             """)
 
@@ -62,15 +62,14 @@ class BancoDeDados:
         conn = self._conectar()
         cursor = conn.cursor()
 
-        #ATIVA A FOREIGN KEY
+        # ATIVA A FOREIGN KEY
         conn.execute("PRAGMA foreign_keys = ON")
-
 
         print(f"Salvando {len(resultados)} registros no histórico...")
 
         for r in resultados:
 
-            #formata a duração para decimal
+            # formata a duração para decimal
             try:
                 h, m = map(int, r.duracao.split(':'))
                 duracao_decimal = h + (m / 60)
@@ -79,11 +78,8 @@ class BancoDeDados:
 
             chapa_valor = getattr(r, 'chapa', None)
 
-
             data_obj = datetime.strptime(r.data_inicio_str, "%Y-%m-%d")
             dia_semana = data_obj.strftime("%A")
-
-
 
             # INSERT
             cursor.execute("""
@@ -102,9 +98,9 @@ class BancoDeDados:
                     data_processamento = CURRENT_TIMESTAMP
                 RETURNING id
             """, (
-                r.nome, chapa_valor, r.idade,r.loja, r.data_inicio_str,
+                r.nome, chapa_valor, r.idade, r.loja, r.data_inicio_str,
                 dia_semana, len(r.batidas),
-                duracao_decimal,r.intervalo
+                duracao_decimal, r.intervalo
             ))
 
             id_jornada = cursor.fetchone()[0]
@@ -152,7 +148,6 @@ class BancoDeDados:
         """
         df = pd.read_sql_query(query, conn)
 
-
         if df.empty: return None
 
         nomes_count = df["nome"].value_counts().head(5)
@@ -162,8 +157,6 @@ class BancoDeDados:
             "values_menores": nomes_count.values.tolist()
 
         }
-
-
 
     def obter_jornadas_validadas(self, conn):
         query = """
@@ -178,13 +171,11 @@ class BancoDeDados:
 
         if df.empty: return None
 
-
         total = df["total"].iloc[0]
 
         return {
             "Total_validado": total
         }
-
 
     def obter_dados_intervalos(self, conn):
         query = """
@@ -199,16 +190,15 @@ class BancoDeDados:
 
         df = pd.read_sql_query(query, conn)
 
-        if df.empty:return None
+        if df.empty: return None
 
         mapeamento_nomes = {
             'INTERVALO_CURTO': 'Curtos',
             'INTERVALO_LONGO': 'Longos'
         }
 
-        #MUDA O NOME DAS LABELS
+        # MUDA O NOME DAS LABELS
         df["tipo_status"] = df["tipo_status"].replace(mapeamento_nomes)
-
 
         total_jornadas_afetadas = df["id"].nunique()
         tipos_counts = df["tipo_status"].value_counts()
@@ -221,8 +211,6 @@ class BancoDeDados:
             "values": tipos_counts.values.tolist(),
 
         }
-
-
 
     def obter_dados_faltas(self, conn):
 
@@ -237,15 +225,15 @@ class BancoDeDados:
 
         df = pd.read_sql_query(query, conn)
 
-        if df.empty:return None
+        if df.empty: return None
 
-        #AGRUPANDO POR DATA
-        #CONTANDO QUANTIDADES E CRIANDO NOVO ÍNDICE "TOTAL"
+        # AGRUPANDO POR DATA
+        # CONTANDO QUANTIDADES E CRIANDO NOVO ÍNDICE "TOTAL"
         df["data"] = pd.to_datetime(df["data"])
         faltas_grouped = df.groupby("data").size().reset_index(name="total")
         faltas_grouped = faltas_grouped.sort_values("data")
 
-        #TOP 5 FUNCIONARIOS COM FALTAS DE MARCAÇÕES
+        # TOP 5 FUNCIONARIOS COM FALTAS DE MARCAÇÕES
         nomes_count = df["nome"].value_counts().head(5)
 
         return {
