@@ -107,8 +107,6 @@ class AppPonto(ctk.CTk):
         if "Dashboard" in self.frames:
             self.frames["Dashboard"].destroy()
 
-            # 2. Criamos o Dashboard como um Frame dentro do container principal
-            # Note que passamos 'dados' para ele
         self.frames["Dashboard"] = DashboardWindow(parent=self.container, controller=self, dados=dados)
         self.frames["Dashboard"].grid(row=0, column=0, sticky="nsew")
 
