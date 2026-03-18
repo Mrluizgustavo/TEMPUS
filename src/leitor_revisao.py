@@ -62,6 +62,14 @@ class LeitorRevisao:
             data_obj = datetime.strptime(data_str, "%Y-%m-%d")
             id_jornada += 1
 
+            # Recupera a sinalização de múltiplas jornadas gravada na coluna REVISAR,
+            # caso ela exista no arquivo. Não vai para o banco — apenas preserva a
+            # informação para que o relatório final possa exibi-la corretamente.
+            multipla = False
+            if "REVISAR" in df.columns:
+                val_revisar = str(row.get("REVISAR", "")).strip()
+                multipla = val_revisar != "" and val_revisar.lower() != "nan"
+
             resultados.append(ResultadoJornada(
                 id_jornada=id_jornada,
                 chapa=str(row["CHAPA"]).strip(),
@@ -74,6 +82,7 @@ class LeitorRevisao:
                 status=status,
                 duracao=duracao,
                 intervalo=intervalo,
+                multipla_jornada_no_dia=multipla,
             ))
 
         return resultados
