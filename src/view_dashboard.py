@@ -29,7 +29,7 @@ TOP5_OPCOES_E_CHAVES = {
     "Intervalos Irregulares": "intervalos_irregulares",
     "Horas Extras":           "extras",
     "Jornadas Longas":        "jornadas_longas",
-    "Jornadas s/ Intervalo":  "jornadas_longas_sem_intervalo",
+    "Jornadas s/ Intervalo":  "jornadas_sem_intervalo",
     "Interjornada Irregular": "interjornada_irregular",
 }
 
@@ -121,6 +121,11 @@ class DashboardWindow(ctk.CTkFrame):
             ctk.CTkFrame(linha2), self.dados.get("irregularidades")
         )
 
+        linha3 = self._criar_linha(parent)
+        frame_faltas = ctk.CTkFrame(linha3)
+        frame_faltas.grid(row=0, column=0, columnspan=2, padx=8, pady=5, sticky="nsew")
+        self._grafico_linha_faltas_marcacao(frame_faltas, self.dados.get("faltas"))
+
     # ─────────────────────────────────────────────────────────────────────────
     # ABA 2 — RISCO TRABALHISTA
     # ─────────────────────────────────────────────────────────────────────────
@@ -131,8 +136,8 @@ class DashboardWindow(ctk.CTkFrame):
         )
         parent.pack(expand=True, fill="both")
 
-        # Card de score de risco — ocupa toda a largura no topo
-        self._card_score_de_risco(parent, self.dados.get("risco"))
+        # Termômetro de risco — ocupa toda a largura no topo
+        self._termometro_de_risco(parent, self.dados.get("risco"))
 
         # Scatter de interjornada + tabela de irregulares
         linha1 = self._criar_linha(parent)
@@ -149,11 +154,8 @@ class DashboardWindow(ctk.CTkFrame):
             ctk.CTkFrame(linha2), self.dados.get("jornadas_longas")
         )
 
-        # Faltas de marcação + menores
+        # Menores irregulares
         linha3 = self._criar_linha(parent)
-        self._grafico_linha_faltas_marcacao(
-            ctk.CTkFrame(linha3), self.dados.get("faltas")
-        )
         self._tabela_menores_irregulares(
             ctk.CTkFrame(linha3), self.dados.get("menores")
         )
@@ -302,38 +304,75 @@ class DashboardWindow(ctk.CTkFrame):
                          text_color="white", justify="center").pack(pady=(0, 14))
 
     # ─────────────────────────────────────────────────────────────────────────
-    # CARD DE SCORE DE RISCO
+    # TERMÔMETRO DE RISCO TRABALHISTA
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _card_score_de_risco(self, parent, dados_risco):
+    def _termometro_de_risco(self, parent, dados_risco):
         if not dados_risco:
             return
 
         score         = dados_risco["score"]
         classificacao = dados_risco["classificacao"]
         detalhes      = dados_risco["detalhes"]
-        cor           = COR_RISCO.get(classificacao, "#555")
+        cor_class     = COR_RISCO.get(classificacao, "#555")
+
+        # Faixas de risco: Baixo 0-50, Médio 50-150, Alto >150
+        # Normaliza o score para posição na barra (0.0 a 1.0), com cap em 200
+        SCORE_MAX = 200
+        posicao   = min(score / SCORE_MAX, 1.0)
 
         container = ctk.CTkFrame(parent, fg_color="#1e1e1e", corner_radius=12)
         container.pack(fill="x", padx=8, pady=(5, 10))
 
-        # Lado esquerdo — número e classificação
-        lado_esq = ctk.CTkFrame(container, fg_color="transparent")
-        lado_esq.pack(side="left", padx=20, pady=16)
+        # ── Bloco esquerdo: termômetro Matplotlib ────────────────────────────
+        lado_esq = ctk.CTkFrame(container, fg_color="transparent", width=320)
+        lado_esq.pack(side="left", padx=16, pady=14)
+        lado_esq.pack_propagate(False)
 
-        ctk.CTkLabel(lado_esq, text="Score de Risco Trabalhista",
-                     font=("Roboto", 12), text_color="#aaa").pack(anchor="w")
-        ctk.CTkLabel(lado_esq, text=str(score),
-                     font=("Roboto", 42, "bold"), text_color=cor).pack(anchor="w")
-        ctk.CTkLabel(lado_esq, text=f"Risco {classificacao}",
-                     font=("Roboto", 14, "bold"), text_color=cor).pack(anchor="w")
+        fig = Figure(figsize=(3.2, 1.4), dpi=DPI, facecolor="#1e1e1e")
+        ax  = fig.add_axes([0.05, 0.45, 0.90, 0.30])   # [left, bottom, width, height]
+        ax.set_facecolor("#1e1e1e")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
 
-        # Separador vertical
-        ctk.CTkFrame(container, width=1, fg_color="#444").pack(
-            side="left", fill="y", padx=10, pady=10
+        # Faixas coloridas da barra
+        ax.barh(0.5, 1/3,        left=0,    height=0.6, color="#2e7d32", edgecolor="none")
+        ax.barh(0.5, 1/3,        left=1/3,  height=0.6, color="#e65100", edgecolor="none")
+        ax.barh(0.5, 1/3,        left=2/3,  height=0.6, color="#b71c1c", edgecolor="none")
+
+        # Ponteiro triangular na posição do score
+        ax.annotate(
+            "", xy=(posicao, 0.88),
+            xytext=(posicao, 1.15),
+            arrowprops=dict(arrowstyle="-|>", color="white", lw=1.5)
         )
 
-        # Lado direito — tabela de detalhes
+        # Rótulos das faixas
+        for x, txt in [(1/6, "BAIXO"), (0.5, "MÉDIO"), (5/6, "ALTO")]:
+            ax.text(x, 0.5, txt, ha="center", va="center",
+                    fontsize=7, color="white", fontweight="bold")
+
+        # Score numérico abaixo da barra
+        ax_title = fig.add_axes([0.05, 0.0, 0.90, 0.40])
+        ax_title.set_facecolor("#1e1e1e")
+        ax_title.axis("off")
+        ax_title.text(0.5, 0.7, "Score de Risco Trabalhista",
+                      ha="center", va="center", fontsize=8, color="#aaa")
+        ax_title.text(0.5, 0.1, f"{score} pontos — Risco {classificacao}",
+                      ha="center", va="center", fontsize=10,
+                      color=cor_class, fontweight="bold")
+
+        canvas = FigureCanvasTkAgg(fig, master=lado_esq)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # ── Separador ────────────────────────────────────────────────────────
+        ctk.CTkFrame(container, width=1, fg_color="#444").pack(
+            side="left", fill="y", padx=8, pady=10
+        )
+
+        # ── Bloco direito: tabela de detalhes do score ───────────────────────
         lado_dir = ctk.CTkFrame(container, fg_color="transparent")
         lado_dir.pack(side="left", fill="both", expand=True, padx=10, pady=12)
 
@@ -344,11 +383,16 @@ class DashboardWindow(ctk.CTkFrame):
                          text_color="#aaa").grid(row=0, column=ci, sticky="w", padx=6, pady=(0, 4))
 
         for li, d in enumerate(detalhes, start=1):
-            valores_celula = [d["irregularidade"], d["ocorrencias"], d["peso"], d["pontos"]]
-            for ci, val in enumerate(valores_celula):
-                cor_txt = COR_VERMELHO if ci == 3 and d["pontos"] > 20 else "white"
-                ctk.CTkLabel(lado_dir, text=str(val), font=("Roboto", 10),
-                             text_color=cor_txt).grid(row=li, column=ci, sticky="w", padx=6, pady=1)
+            for ci, (val, destaque) in enumerate([
+                (d["irregularidade"], False),
+                (d["ocorrencias"],    False),
+                (d["peso"],           False),
+                (d["pontos"],         d["pontos"] > 20),
+            ]):
+                ctk.CTkLabel(
+                    lado_dir, text=str(val), font=("Roboto", 10),
+                    text_color=COR_VERMELHO if destaque else "white"
+                ).grid(row=li, column=ci, sticky="w", padx=6, pady=1)
 
     # ─────────────────────────────────────────────────────────────────────────
     # GRÁFICO — pizza de intervalos
@@ -578,20 +622,20 @@ class DashboardWindow(ctk.CTkFrame):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _grafico_linha_faltas_marcacao(self, frame, dados):
-        frame.grid(row=0, column=0, padx=8, pady=5, sticky="nsew")
+        # frame já posicionado pelo chamador com columnspan=2
 
         if not dados:
             self._exibir_mensagem_sem_dados(frame, "Sem faltas de marcação")
             return
 
-        figura = self._criar_figura_escura()
+        figura = self._criar_figura_escura(10, 3)
         ax     = self._configurar_eixo_escuro(figura)
 
         ax.plot(dados["labels_faltas_marcacao"], dados["values_faltas_marcacao"],
                 marker="o", color=COR_VERMELHO, linewidth=2, markersize=5)
         ax.fill_between(dados["labels_faltas_marcacao"], dados["values_faltas_marcacao"],
                         alpha=0.12, color=COR_VERMELHO)
-        ax.set_title("Faltas de Marcação por Data", fontsize=10, color="white", pad=8)
+        ax.set_title("Faltas de Marcação por Data", fontsize=11, color="white", pad=8)
         ax.set_xlabel("Data", fontsize=8, color="white")
         ax.set_ylabel("Quantidade", fontsize=8, color="white")
         ax.tick_params(axis="x", rotation=45)
@@ -661,23 +705,136 @@ class DashboardWindow(ctk.CTkFrame):
         self._registrar_evento_hover(canvas, ax, barras, nomes, values, tooltip)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # TABELA — ranking detalhado de funcionários
+    # TABELA — ranking com painel de detalhamento ao clicar no funcionário
     # ─────────────────────────────────────────────────────────────────────────
 
     def _tabela_ranking_de_funcionarios(self, frame, dados_ranking):
         frame.grid(row=0, column=1, padx=8, pady=5, sticky="nsew")
+
         ctk.CTkLabel(frame, text="🏆 Top 10 — Maior Risco Individual",
                      font=("Roboto", 11, "bold"), text_color=COR_VERMELHO
                      ).pack(anchor="w", padx=10, pady=(8, 4))
+
+        ctk.CTkLabel(frame, text="Clique em um funcionário para ver o detalhamento",
+                     font=("Roboto", 9, "italic"), text_color="#888"
+                     ).pack(anchor="w", padx=10, pady=(0, 4))
 
         if not dados_ranking:
             self._exibir_mensagem_sem_dados(frame, "Sem dados de ranking")
             return
 
-        self._renderizar_tabela_generica(
-            frame, dados_ranking["tabela"],
-            total_real=dados_ranking["total_real"], altura=280
+        registros    = dados_ranking["tabela"]
+        detalhamento = dados_ranking.get("detalhamento_por_nome", {})
+        total_real   = dados_ranking["total_real"]
+        colunas      = ["Nome", "Pontos", "Tipos"]
+
+        # ── Área da tabela ────────────────────────────────────────────────────
+        area_tabela = ctk.CTkScrollableFrame(frame, height=200, fg_color="transparent")
+        area_tabela.pack(fill="x", padx=8, pady=(0, 2))
+
+        for ci, col in enumerate(colunas):
+            area_tabela.grid_columnconfigure(ci, weight=1)
+            ctk.CTkLabel(area_tabela, text=col,
+                         font=("Roboto", 10, "bold"), fg_color="#3a3a3a",
+                         corner_radius=4, text_color="#ccc"
+                         ).grid(row=0, column=ci, padx=2, pady=(2, 1), sticky="ew")
+
+        # ── Painel de detalhamento — oculto até um clique ─────────────────────
+        painel_detalhe = ctk.CTkFrame(frame, fg_color="#252525", corner_radius=8)
+        # Não empacotado ainda — aparece ao clicar
+
+        lbl_detalhe_titulo = ctk.CTkLabel(
+            painel_detalhe, text="", font=("Roboto", 10, "bold"), text_color=COR_AMARELO
         )
+        lbl_detalhe_titulo.pack(anchor="w", padx=10, pady=(8, 4))
+
+        area_detalhe = ctk.CTkFrame(painel_detalhe, fg_color="transparent")
+        area_detalhe.pack(fill="x", padx=10, pady=(0, 8))
+
+        # Guarda qual linha está selecionada para toggle
+        self._linha_selecionada_ranking = ctk.StringVar(value="")
+        linhas_frames: dict[str, list] = {}
+
+        def _selecionar_funcionario(nome: str):
+            """Exibe ou oculta o painel de detalhamento ao clicar numa linha."""
+            # Toggle: clicando no mesmo nome fecha o painel
+            if self._linha_selecionada_ranking.get() == nome:
+                self._linha_selecionada_ranking.set("")
+                painel_detalhe.pack_forget()
+                _resetar_cores_linhas()
+                return
+
+            self._linha_selecionada_ranking.set(nome)
+            _resetar_cores_linhas()
+
+            # Destaca a linha selecionada
+            for widget in linhas_frames.get(nome, []):
+                widget.configure(fg_color="#3a3a3a")
+
+            # Monta o conteúdo do painel
+            lbl_detalhe_titulo.configure(text=f"Detalhamento: {nome}")
+
+            for widget in area_detalhe.winfo_children():
+                widget.destroy()
+
+            itens = detalhamento.get(nome, [])
+            if not itens:
+                ctk.CTkLabel(area_detalhe, text="Sem detalhamento disponível",
+                             text_color="gray", font=("Roboto", 9)).pack(anchor="w")
+            else:
+                cabs_det = ["Irregularidade", "Ocorrências", "Pontos"]
+                for ci, cab in enumerate(cabs_det):
+                    area_detalhe.grid_columnconfigure(ci, weight=1)
+                    ctk.CTkLabel(area_detalhe, text=cab,
+                                 font=("Roboto", 9, "bold"), text_color="#aaa"
+                                 ).grid(row=0, column=ci, sticky="w", padx=6, pady=(0, 3))
+
+                for li, item in enumerate(itens, start=1):
+                    bg = "#2e2e2e" if li % 2 == 0 else "transparent"
+                    for ci, (val, col_detalhe) in enumerate([
+                        (item["irregularidade"], False),
+                        (item["ocorrencias"],    False),
+                        (item["pontos"],         True),
+                    ]):
+                        cor_txt = COR_VERMELHO if col_detalhe and item["pontos"] > 10 else "white"
+                        ctk.CTkLabel(area_detalhe, text=str(val),
+                                     font=("Roboto", 9), fg_color=bg,
+                                     corner_radius=0, text_color=cor_txt, anchor="w"
+                                     ).grid(row=li, column=ci, sticky="ew", padx=6, pady=1)
+
+            painel_detalhe.pack(fill="x", padx=8, pady=(2, 6))
+
+        def _resetar_cores_linhas():
+            for li, (nome_linha, widgets) in enumerate(linhas_frames.items(), start=1):
+                bg = "#2e2e2e" if li % 2 == 0 else "transparent"
+                for widget in widgets:
+                    widget.configure(fg_color=bg)
+
+        # ── Linhas da tabela ─────────────────────────────────────────────────
+        for li, reg in enumerate(registros, start=1):
+            nome_func = reg["Nome"]
+            bg        = "#2e2e2e" if li % 2 == 0 else "transparent"
+            widgets_linha = []
+
+            for ci, col in enumerate(colunas):
+                lbl = ctk.CTkLabel(
+                    area_tabela, text=str(reg.get(col, "")),
+                    font=("Roboto", 10), fg_color=bg,
+                    corner_radius=0, text_color="white", anchor="w",
+                    cursor="hand2"
+                )
+                lbl.grid(row=li, column=ci, padx=2, pady=1, sticky="ew")
+                lbl.bind("<Button-1>", lambda e, n=nome_func: _selecionar_funcionario(n))
+                widgets_linha.append(lbl)
+
+            linhas_frames[nome_func] = widgets_linha
+
+        if total_real > len(registros):
+            ctk.CTkLabel(
+                frame,
+                text=f"Exibindo 10 de {total_real} registros — veja o relatório completo para todos os casos",
+                font=("Roboto", 9, "italic"), text_color="#888"
+            ).pack(anchor="e", padx=10, pady=(0, 6))
 
     # ─────────────────────────────────────────────────────────────────────────
     # GRÁFICO — top 5 com seletor

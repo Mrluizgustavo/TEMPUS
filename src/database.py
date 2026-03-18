@@ -11,12 +11,12 @@ MINUTOS_INTERJORNADA_MINIMA = 11 * 60        # 660 min — mínimo legal CLT
 # Pesos de risco por tipo de irregularidade (conforme tabela definida)
 PESOS_RISCO = {
     "INTERVALO_CURTO":             2,   # Intervalo < 1h
-    "JORNADA_LONGA_SEM_INTERVALO": 4,   # Intervalo inexistente
+    "JORNADA_SEM_INTERVALO": 4,   # Intervalo inexistente
     "INTERJORNADA_IRREGULAR":      3,   # Descanso < 11h
     "JORNADA_LONGA":               2,   # Jornada > 10h (base)
     # Jornada > 12h recebe peso 4 — tratado separadamente no cálculo
     "JORNADA_IRREGULAR_MENOR":     5,   # Menor após 22h
-    "FALTA_DE_MARCACAO":           1,   # Falta de marcação
+    # FALTA_DE_MARCACAO removida do score de risco trabalhista
 }
 
 # Faixas do score de risco para classificação visual
@@ -330,6 +330,16 @@ class BancoDeDados:
         detalhes = []
 
         for tipo, grupo in df.groupby("tipo_status"):
+            # FALTA_DE_MARCACAO não entra no score de risco trabalhista
+            if tipo == "FALTA_DE_MARCACAO":
+                continue
+
+            # Jornada sem intervalo só é irregularidade acima de 6h trabalhadas (360 min)
+            if tipo == "JORNADA_SEM_INTERVALO":
+                grupo = grupo[grupo["minutos_trabalhados"] > 360]
+                if grupo.empty:
+                    continue
+
             contagem = int(grupo["total"].sum())
 
             if tipo == "JORNADA_LONGA":
@@ -356,10 +366,9 @@ class BancoDeDados:
 
             nomes_legiveis = {
                 "INTERVALO_CURTO":             "Intervalo < 1h",
-                "JORNADA_LONGA_SEM_INTERVALO": "Intervalo inexistente",
+                "JORNADA_SEM_INTERVALO": "JORNADA_SEM_INTERVALO_ACIMA_6H",
                 "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
                 "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
-                "FALTA_DE_MARCACAO":           "Falta de marcação",
             }
             detalhes.append((nomes_legiveis.get(tipo, tipo), contagem, peso, pts))
 
@@ -445,22 +454,49 @@ class BancoDeDados:
         top15 = ranking.head(15)
         top10 = ranking.head(10)
 
-        return {
-            # Gráfico de barras — top 15
-            "grafico_labels": top15["nome"].apply(lambda n: n.split()[0]).tolist(),
-            "grafico_nomes":  top15["nome"].tolist(),
-            "grafico_valores": top15["pontos"].astype(int).tolist(),
+        nomes_legiveis = {
+            "INTERVALO_CURTO":             "Intervalo < 1h",
+            "INTERVALO_LONGO":             "Intervalo Longo",
+            "JORNADA_SEM_INTERVALO": "Intervalo inexistente",
+            "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
+            "JORNADA_LONGA":               "Jornada Longa",
+            "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
+            "FALTA_DE_MARCACAO":           "Falta de marcação",
+            "EXTRA":                       "Hora Extra",
+            "JORNADA_CURTA":               "Jornada Curta",
+        }
 
-            # Tabela — top 10 com detalhes
+        # Detalhamento por funcionário — para o painel de clique na tabela
+        detalhamento_por_nome: dict[str, list[dict]] = {}
+        for nome, grupo in df[df["pontos"] > 0].groupby("nome"):
+            itens = (
+                grupo[["tipo_status", "total", "pontos"]]
+                .sort_values("pontos", ascending=False)
+                .to_dict(orient="records")
+            )
+            detalhamento_por_nome[nome] = [
+                {
+                    "irregularidade": nomes_legiveis.get(i["tipo_status"], i["tipo_status"]),
+                    "ocorrencias":    int(i["total"]),
+                    "pontos":         int(i["pontos"]),
+                }
+                for i in itens
+            ]
+
+        return {
+            "grafico_labels":         top15["nome"].apply(lambda n: n.split()[0]).tolist(),
+            "grafico_nomes":          top15["nome"].tolist(),
+            "grafico_valores":        top15["pontos"].astype(int).tolist(),
             "tabela": [
                 {
-                    "Nome":    row["nome"],
-                    "Pontos":  int(row["pontos"]),
-                    "Tipos":   int(row["tipos_distintos"]),
+                    "Nome":   row["nome"],
+                    "Pontos": int(row["pontos"]),
+                    "Tipos":  int(row["tipos_distintos"]),
                 }
                 for _, row in top10.iterrows()
             ],
-            "total_real": len(ranking),
+            "total_real":             len(ranking),
+            "detalhamento_por_nome":  detalhamento_por_nome,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -552,7 +588,7 @@ class BancoDeDados:
             "FALTA_DE_MARCACAO":           "faltas_marcacao",
             "EXTRA":                       "extras",
             "JORNADA_LONGA":               "jornadas_longas",
-            "JORNADA_LONGA_SEM_INTERVALO": "jornadas_longas_sem_intervalo",
+            "JORNADA_SEM_INTERVALO": "jornadas_sem_intervalo",
             "INTERVALO_CURTO":             "intervalos_irregulares",
             "INTERVALO_LONGO":             "intervalos_irregulares",
             "INTERJORNADA_IRREGULAR":      "interjornada_irregular",
@@ -705,7 +741,7 @@ class BancoDeDados:
             "INTERVALO_CURTO":             "Intervalo Curto",
             "INTERVALO_LONGO":             "Intervalo Longo",
             "JORNADA_LONGA":               "Jornada Longa",
-            "JORNADA_LONGA_SEM_INTERVALO": "Jornada s/ Intervalo",
+            "JORNADA_SEM_INTERVALO": "Jornada s/ Intervalo",
             "JORNADA_CURTA":               "Jornada Curta",
             "EXTRA":                       "Hora Extra",
             "JORNADA_IRREGULAR_MENOR":     "Menor Irregular",

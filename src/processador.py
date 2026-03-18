@@ -143,7 +143,7 @@ class Processador:
 
         if 7.35 < duracao_horas < 10:       alertas.append("EXTRA")
         if duracao_horas > 10:              alertas.append("JORNADA_LONGA")
-        if qtd == 2 and duracao_horas > 6:  alertas.append("JORNADA_LONGA_SEM_INTERVALO")
+        if qtd == 2 and duracao_horas > 6:  alertas.append("JORNADA_SEM_INTERVALO")
         if duracao_horas < 4:               alertas.append("JORNADA_CURTA")
 
         if not alertas:
