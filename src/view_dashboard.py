@@ -332,7 +332,7 @@ class DashboardWindow(ctk.CTkFrame):
         frame.grid(row=0, column=1, padx=8, pady=5, sticky="nsew")
 
         if not dados_distribuicao:
-            self._exibir_mensagem_sem_dados(frame, "Sem dados de distribuição")
+            self._exibir_mensagem_sem_dados(frame, "Sem dados de distribuição de jornada")
             return
 
         figura = self._criar_figura_escura()

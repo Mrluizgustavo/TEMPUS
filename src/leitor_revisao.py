@@ -6,11 +6,6 @@ from .reporter_revisao import ExcelReporterRevisao
 
 
 class LeitorRevisao:
-    """
-    Relê o Excel de revisão (Revisao_Jornadas.xlsx), reconstrói os datetimes
-    de cada batida, roda _analisar_status() e devolve lista de ResultadoJornada
-    pronta para gerar o relatório final e salvar no banco.
-    """
 
     COLUNAS_FIXAS = ["CHAPA", "LOJA", "NOME", "IDADE", "DATA"]
 

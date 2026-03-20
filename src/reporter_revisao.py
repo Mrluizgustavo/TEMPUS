@@ -14,13 +14,7 @@ class ExcelReporterRevisao:
     """
     Gera o Excel intermediário de revisão humana.
     Contém apenas a segmentação das jornadas — sem status, duração ou intervalo.
-    O usuário corrige os agrupamentos e depois confirma na Etapa 2.
 
-    Coluna REVISAR:
-        "⚠ Múltiplas jornadas no dia" — quando o mesmo funcionário tem mais de
-        uma jornada registrada na mesma data, indicando possível erro de
-        segmentação. A linha inteira é destacada em amarelo para facilitar
-        a localização visual durante a revisão.
     """
 
     NOME_ARQUIVO  = "Revisao_Jornadas.xlsx"
@@ -46,7 +40,7 @@ class ExcelReporterRevisao:
                 "NOME":    r.nome,
                 "IDADE":   r.idade,
                 "DATA":    r.data_inicio_str,
-                "REVISAR": "⚠ Múltiplas jornadas no dia" if r.multipla_jornada_no_dia else "",
+                "REVISAR": "REVISAR" if r.multipla_jornada_no_dia else "",
             }
             for i, horario in enumerate(r.batidas):
                 # Remove prefixo de dia seguinte "(DD) " para deixar só "HH:MM"

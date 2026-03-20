@@ -5,6 +5,10 @@ from datetime import datetime
 
 MINUTOS_INTERJORNADA_MINIMA = 11 * 60  # 660 min — exigência CLT
 
+MINUTOS_JORNADA_NORMAL    = 7 * 60 + 20   # 440 min — base de desconto do excedente
+MINUTOS_TOLERANCIA_EXTRA  = 10             # tolerância antes de classificar como extra
+MINUTOS_GATILHO_EXTRA     = MINUTOS_JORNADA_NORMAL + MINUTOS_TOLERANCIA_EXTRA  # 450 min = 7:30
+
 
 @dataclass
 class ResultadoJornada:
@@ -107,7 +111,13 @@ class Processador:
 
         return batidas
 
-    def _analisar_status(self, batidas_dt: pd.Series, idade: int) -> tuple[list[str], str, str, int]:
+    def _analisar_status(
+        self,
+        batidas_dt: pd.Series,
+        idade: int,
+        minutos_jornada_normal: int = MINUTOS_JORNADA_NORMAL,
+        minutos_gatilho_extra:  int = MINUTOS_GATILHO_EXTRA,
+    ) -> tuple[list[str], str, str, int]:
         if not pd.api.types.is_datetime64_any_dtype(batidas_dt):
             batidas_dt = pd.to_datetime(batidas_dt, errors="coerce")
 
@@ -146,9 +156,13 @@ class Processador:
             if intervalo < (50 / 60): alertas.append("INTERVALO_CURTO")
             if intervalo > (70 / 60): alertas.append("INTERVALO_LONGO")
 
-        if 7.35 < duracao_horas < 10:       alertas.append("EXTRA")
-        if duracao_horas > 10:              alertas.append("JORNADA_LONGA")
-        if qtd == 2 and duracao_horas > 6:  alertas.append("JORNADA_LONGA_SEM_INTERVALO")
+        # Gatilho: só é EXTRA se ultrapassou o tempo de tolerância (7:30).
+        # O excedente, porém, é contado a partir da jornada normal (7:20),
+        # garantindo que o banco armazene o valor real de minutos excedentes.
+        duracao_minutos = total_segundos / 60
+        if minutos_gatilho_extra < duracao_minutos < 10 * 60: alertas.append("EXTRA")
+        if duracao_minutos >= 10 * 60:                        alertas.append("JORNADA_LONGA")
+        if qtd == 2 and duracao_horas > 6:  alertas.append("JORNADA_6HORAS_SEM_INTERVALO")
         if duracao_horas < 4:               alertas.append("JORNADA_CURTA")
 
         if not alertas:
@@ -158,7 +172,7 @@ class Processador:
 
     def _calcular_interjornadas(self, resultados: list[ResultadoJornada]) -> list[ResultadoJornada]:
         """
-        Para cada funcionário, percorre suas jornadas em ordem cronológica e
+        Para cada funcionário, percorre as suas jornadas em ordem cronológica e
         calcula o tempo entre o fim de uma e o início da próxima.
 
         A interjornada é atribuída à jornada que CHEGA — ou seja, a que sofre
@@ -216,7 +230,13 @@ class Processador:
 
         return resultados
 
-    def executar_analise(self, data_inicio_filtro=None, data_fim_filtro=None) -> list[ResultadoJornada]:
+    def executar_analise(
+        self,
+        data_inicio_filtro=None,
+        data_fim_filtro=None,
+        minutos_jornada_normal: int = MINUTOS_JORNADA_NORMAL,
+        minutos_gatilho_extra:  int = MINUTOS_GATILHO_EXTRA,
+    ) -> list[ResultadoJornada]:
         self._preparar_timeline()
         self._segmentar_jornadas()
 
@@ -241,7 +261,9 @@ class Processador:
             ]
 
             status, duracao, intervalo, idade = self._analisar_status(
-                batidas_dt, dados["IDADE"].iloc[0]
+                batidas_dt, dados["IDADE"].iloc[0],
+                minutos_jornada_normal=minutos_jornada_normal,
+                minutos_gatilho_extra=minutos_gatilho_extra,
             )
 
             resultados.append(ResultadoJornada(

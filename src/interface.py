@@ -1,9 +1,10 @@
 import customtkinter as ctk
-import tkinter as tk
+import tkinter
 from tkinter import messagebox, filedialog
 import threading
 import os
 from datetime import datetime
+from PIL import Image
 
 from src.loader import ExcelLoader
 from src.processador import Processador
@@ -23,6 +24,9 @@ class AppPonto(ctk.CTk):
         super().__init__()
 
         self.bind("<Control-r>", lambda e: self.reiniciar())
+
+        diretorio_assets = os.path.dirname(os.path.abspath(__file__))
+        caminho_icone = os.path.join(diretorio_assets, "IMG/favicon.ico")
 
         largura_janela = 1000
         altura_janela  = 900
@@ -48,6 +52,21 @@ class AppPonto(ctk.CTk):
             self.sidebar_frame, text="TEMPUS",
             font=ctk.CTkFont(size=20, weight="bold")
         ).grid(row=0, column=0, padx=20, pady=(20, 10))
+
+        # Por isso:
+        logo_img = ctk.CTkImage(
+            light_image=Image.open(caminho_icone),
+            dark_image=Image.open(caminho_icone),
+            size=(30, 30)
+        )
+        ctk.CTkLabel(
+            self.sidebar_frame,
+            text="  TEMPUS",
+            image=logo_img,
+            compound="left",
+            font=ctk.CTkFont(size=20, weight="bold")
+        ).grid(row=0, column=0, padx=20, pady=(20, 10))
+
 
         ctk.CTkButton(
             self.sidebar_frame, text="Processar Ponto",
@@ -196,13 +215,12 @@ class AppPonto(ctk.CTk):
 
     def _configurar_icone(self):
         try:
-            caminho_base  = os.path.dirname(os.path.abspath(__file__))
-            caminho_icone = os.path.join(caminho_base, "IMG", "ICON.png")
-            if os.path.exists(caminho_icone):
-                self.icone_img = tk.PhotoImage(file=caminho_icone)
-                self.iconphoto(False, self.icone_img)
-        except Exception:
-            pass
+            caminho_base = os.path.dirname(os.path.abspath(__file__))
+            caminho_ico = os.path.join(caminho_base, "IMG", "favicon.ico")
+            if os.path.exists(caminho_ico):
+                self.iconbitmap(caminho_ico)
+        except Exception as e:
+            print(f"Erro ao configurar ícone: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -5,7 +5,8 @@ import pandas as pd
 
 from src.processador import ResultadoJornada
 
-MINUTOS_JORNADA_NORMAL      = 7 * 60 + 35   # 455 min
+MINUTOS_JORNADA_NORMAL      = 7 * 60 + 20   # 440 min — base de desconto do excedente
+MINUTOS_GATILHO_EXTRA       = 7 * 60 + 30   # 450 min — só conta como extra acima disto
 MINUTOS_INTERJORNADA_MINIMA = 11 * 60        # 660 min — mínimo legal CLT
 
 
@@ -262,7 +263,8 @@ class BancoDeDados:
                 COUNT(DISTINCT j.id_funcionario)                           AS funcionarios,
                 SUM(CASE
                         WHEN s.tipo_status IN ('EXTRA','JORNADA_LONGA')
-                        THEN MAX(0, j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL})
+                         AND j.minutos_trabalhados > {MINUTOS_GATILHO_EXTRA}
+                        THEN j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL}
                         ELSE 0
                     END) / 60.0                                            AS horas_extras,
                 COUNT(DISTINCT CASE
@@ -278,9 +280,11 @@ class BancoDeDados:
             {where}
         """, conn, params=p).iloc[0]
 
+        _minutos = round(float(row["horas_extras"] or 0) * 60)
+
         return {
             "total_funcionarios":              int(row["funcionarios"] or 0),
-            "total_horas_extras":              round(float(row["horas_extras"] or 0), 1),
+            "total_horas_extras": f"{_minutos // 60:02d}:{_minutos % 60:02d}",
             "total_intervalos_irregulares":    int(row["intervalos_irreg"] or 0),
             "total_faltas_marcacao":           int(row["faltas"] or 0),
             "total_interjornadas_irregulares": int(row["interjornadas_irreg"] or 0),
@@ -345,8 +349,8 @@ class BancoDeDados:
         df = pd.read_sql_query(f"""
             SELECT
                 CASE
-                    WHEN minutos_trabalhados <=  480 THEN 'Até 8h'
-                    WHEN minutos_trabalhados <=  600 THEN '8h – 10h'
+                    WHEN minutos_trabalhados <=  440 THEN 'Até 07:20h'
+                    WHEN minutos_trabalhados <=  600 THEN '07:20h – 10h'
                     ELSE '>10h'
                 END AS faixa,
                 COUNT(*) AS total
@@ -359,7 +363,7 @@ class BancoDeDados:
         if df.empty:
             return None
 
-        ordem  = ["Até 8h", "8h – 10h", ">10h"]
+        ordem  = ["Até 07:20h", "07:20h – 10h", ">10h"]
         lookup = dict(zip(df["faixa"], df["total"]))
 
         return {
@@ -374,13 +378,19 @@ class BancoDeDados:
 
     def calcular_evolucao_horas_extras(self, conn, loja, ano_mes) -> dict | None:
         where, p = self._montar_filtro_sql(
-            loja, ano_mes, "s.tipo_status IN ('EXTRA','JORNADA_LONGA')"
+            loja, ano_mes, "s.tipo_status IN ('EXTRA', 'JORNADA_LONGA')"
         )
 
         df = pd.read_sql_query(f"""
             SELECT
                 j.ano_mes,
-                SUM(MAX(0, j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL})) / 60.0 AS horas
+                SUM(
+                    CASE
+                        WHEN j.minutos_trabalhados > {MINUTOS_GATILHO_EXTRA}
+                        THEN j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL}
+                        ELSE 0
+                    END
+                ) / 60.0 AS horas
             FROM jornadas j
             JOIN funcionarios f ON f.id = j.id_funcionario
             JOIN status_jornada s ON s.id_jornada = j.id
@@ -422,7 +432,7 @@ class BancoDeDados:
             "INTERVALO_CURTO":             "Intervalo Curto",
             "INTERVALO_LONGO":             "Intervalo Longo",
             "JORNADA_LONGA":               "Jornada Longa",
-            "JORNADA_LONGA_SEM_INTERVALO": "Jornada s/ Intervalo",
+            "JORNADA_6HORAS_SEM_INTERVALO": "Jornada s/ Intervalo",
             "JORNADA_CURTA":               "Jornada Curta",
             "EXTRA":                       "Hora Extra",
             "JORNADA_IRREGULAR_MENOR":     "Menor Irregular",
@@ -458,18 +468,23 @@ class BancoDeDados:
             "INTERVALO_LONGO": "Longos",
         })
 
-        total_afetadas = pd.read_sql_query(f"""
-            SELECT COUNT(DISTINCT j.id) AS total
+        total_afetadas = int(df["total"].sum())
+
+        # Base correta para a pizza: jornadas com 4 batidas (única situação onde
+        # o intervalo é calculado). Usa filtro só de loja/mês, sem filtro de status.
+        where_base, p_base = self._montar_filtro_sql(loja, ano_mes, "j.qtd_batidas = 4")
+        total_base = pd.read_sql_query(f"""
+            SELECT COUNT(*) AS total
             FROM jornadas j
             JOIN funcionarios f ON f.id = j.id_funcionario
-            JOIN status_jornada s ON s.id_jornada = j.id
-            {where}
-        """, conn, params=p)["total"].iloc[0]
+            {where_base}
+        """, conn, params=p_base)["total"].iloc[0]
 
         return {
-            "total_intervalos_irregulares": int(total_afetadas),
-            "labels": df["tipo_status"].tolist(),
-            "values": df["total"].tolist(),
+            "total_intervalos_irregulares": total_afetadas,
+            "total_base_intervalo":         int(total_base),
+            "labels":                       df["tipo_status"].tolist(),
+            "values":                       df["total"].tolist(),
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -585,7 +600,7 @@ class BancoDeDados:
             "faltas_marcacao":               "s.tipo_status = 'FALTA_DE_MARCACAO'",
             "extras":                        "s.tipo_status = 'EXTRA'",
             "jornadas_longas":               "s.tipo_status = 'JORNADA_LONGA'",
-            "jornadas_longas_sem_intervalo": "s.tipo_status = 'JORNADA_LONGA_SEM_INTERVALO'",
+            "jornadas_longas_sem_intervalo": "s.tipo_status = 'JORNADA_6HORAS_SEM_INTERVALO'",
             "intervalos_irregulares":        "s.tipo_status IN ('INTERVALO_CURTO','INTERVALO_LONGO')",
             "interjornada_irregular":        "s.tipo_status = 'INTERJORNADA_IRREGULAR'",
         }

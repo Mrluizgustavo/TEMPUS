@@ -81,7 +81,7 @@ class ExcelReporter:
 
             "JORNADA_LONGA": "JORNADAS_IRREGULARES",
             "JORNADA_CURTA": "JORNADAS_IRREGULARES",
-            "JORNADA_LONGA_SEM_INTERVALO": "JORNADAS_IRREGULARES"
+            "JORNADA_SEM_INTERVALO": "JORNADAS_IRREGULARES"
         }
 
         abas = {
