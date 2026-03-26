@@ -30,7 +30,7 @@ class LeitorRevisao:
         id_jornada  = 0
 
         for _, row in df.iterrows():
-            data_str = str(row["DATA"]).strip()
+            data_str = str(row["DATA"]).strip()[:10]
 
             # Reconstrói datetimes das batidas
             batidas_dt = []
