@@ -5,9 +5,23 @@ import pandas as pd
 
 from src.processador import ResultadoJornada
 
-MINUTOS_JORNADA_NORMAL      = 7 * 60 + 20   # 440 min — base de desconto do excedente
-MINUTOS_GATILHO_EXTRA       = 7 * 60 + 30   # 450 min — só conta como extra acima disto
+MINUTOS_JORNADA_NORMAL      = 7 * 60 + 35   # 455 min
 MINUTOS_INTERJORNADA_MINIMA = 11 * 60        # 660 min — mínimo legal CLT
+
+# Pesos de risco por tipo de irregularidade (conforme tabela definida)
+PESOS_RISCO = {
+    "INTERVALO_CURTO":             2,   # Intervalo < 1h
+    "JORNADA_SEM_INTERVALO": 4,   # Intervalo inexistente
+    "INTERJORNADA_IRREGULAR":      3,   # Descanso < 11h
+    "JORNADA_LONGA":               2,   # Jornada > 10h (base)
+    # Jornada > 12h recebe peso 4 — tratado separadamente no cálculo
+    "JORNADA_IRREGULAR_MENOR":     5,   # Menor após 22h
+    # FALTA_DE_MARCACAO removida do score de risco trabalhista
+}
+
+# Faixas do score de risco para classificação visual
+FAIXA_RISCO_BAIXO  = 50
+FAIXA_RISCO_MEDIO  = 150
 
 
 class BancoDeDados:
@@ -48,7 +62,7 @@ class BancoDeDados:
                 ano_mes               TEXT    NOT NULL,
                 minutos_trabalhados   INTEGER NOT NULL,
                 minutos_intervalo     INTEGER NOT NULL DEFAULT 0,
-                minutos_interjornada  INTEGER,          -- NULL = sem jornada anterior no período
+                minutos_interjornada  INTEGER,
                 qtd_batidas           INTEGER NOT NULL,
                 data_processamento    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(id_funcionario, data),
@@ -65,13 +79,12 @@ class BancoDeDados:
             )
         """)
 
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_func_chapa        ON funcionarios(chapa)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_func_loja         ON funcionarios(loja)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jornada_func      ON jornadas(id_funcionario)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jornada_ano_mes   ON jornadas(ano_mes)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_status_tipo       ON status_jornada(tipo_status, id_jornada)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_func_chapa      ON funcionarios(chapa)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_func_loja       ON funcionarios(loja)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jornada_func    ON jornadas(id_funcionario)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jornada_ano_mes ON jornadas(ano_mes)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_status_tipo     ON status_jornada(tipo_status, id_jornada)")
 
-        # Migração silenciosa — adiciona a coluna se o banco já existia sem ela
         try:
             cur.execute("ALTER TABLE jornadas ADD COLUMN minutos_interjornada INTEGER")
         except:
@@ -91,7 +104,6 @@ class BancoDeDados:
         conn = self._conectar()
         cur  = conn.cursor()
 
-        # 1. Upsert de funcionários em batch
         cur.executemany("""
             INSERT INTO funcionarios (chapa, nome, loja, idade)
             VALUES (?, ?, ?, ?)
@@ -101,7 +113,6 @@ class BancoDeDados:
                 idade = excluded.idade
         """, [(r.chapa, r.nome, r.loja, r.idade) for r in resultados])
 
-        # 2. Busca ids dos funcionários em uma única query
         chapas = list({r.chapa for r in resultados})
         cur.execute(
             f"SELECT chapa, id FROM funcionarios WHERE chapa IN ({','.join('?'*len(chapas))})",
@@ -109,7 +120,6 @@ class BancoDeDados:
         )
         id_por_chapa = dict(cur.fetchall())
 
-        # 3. Upsert de jornadas em batch
         cur.executemany("""
             INSERT INTO jornadas
                 (id_funcionario, data, ano_mes, minutos_trabalhados,
@@ -135,7 +145,6 @@ class BancoDeDados:
             for r in resultados
         ])
 
-        # 4. Busca ids das jornadas recém salvas
         chaves = [f"{id_por_chapa[r.chapa]}|{r.data_inicio_str}" for r in resultados]
         cur.execute(
             f"""SELECT id_funcionario || '|' || data AS chave, id
@@ -148,7 +157,6 @@ class BancoDeDados:
             for c, jid in cur.fetchall()
         }
 
-        # 5. Limpa status antigos e insere novos em batch
         ids = list(id_por_jornada.values())
         cur.execute(
             f"DELETE FROM status_jornada WHERE id_jornada IN ({','.join('?'*len(ids))})", ids
@@ -236,17 +244,24 @@ class BancoDeDados:
         ano_mes = self._converter_mes_para_sql(mes_ano)
         try:
             return {
-                "kpis":                self.calcular_kpis(conn, loja, ano_mes),
-                "intervalos":          self.buscar_intervalos_irregulares(conn, loja, ano_mes),
-                "faltas":              self.buscar_faltas_de_marcacao(conn, loja, ano_mes),
-                "menores":             self.buscar_jornadas_irregulares_de_menores(conn, loja, ano_mes),
-                "jornadas_longas":     self.buscar_jornadas_acima_de_10h(conn, loja, ano_mes),
-                "total_validado":      self.contar_jornadas_sem_irregularidade(conn, loja, ano_mes),
-                "distribuicao":        self.calcular_distribuicao_jornadas(conn, loja, ano_mes),
-                "horas_extras":        self.calcular_evolucao_horas_extras(conn, loja, ano_mes),
-                "irregularidades":     self.contar_irregularidades_por_tipo(conn, loja, ano_mes),
-                "top5":                self.buscar_top5_por_tipo_de_irregularidade(conn, loja, ano_mes),
-                "interjornada":        self.buscar_dados_interjornada(conn, loja, ano_mes),
+                # Aba 1 — Visão Geral
+                "kpis":            self.calcular_kpis(conn, loja, ano_mes),
+                "intervalos":      self.buscar_intervalos_irregulares(conn, loja, ano_mes),
+                "distribuicao":    self.calcular_distribuicao_jornadas(conn, loja, ano_mes),
+                "horas_extras":    self.calcular_evolucao_horas_extras(conn, loja, ano_mes),
+                "irregularidades": self.contar_irregularidades_por_tipo(conn, loja, ano_mes),
+                "total_validado":  self.contar_jornadas_sem_irregularidade(conn, loja, ano_mes),
+
+                # Aba 2 — Risco Trabalhista
+                "risco":           self.calcular_score_de_risco_trabalhista(conn, loja, ano_mes),
+                "interjornada":    self.buscar_dados_interjornada(conn, loja, ano_mes),
+                "jornadas_longas": self.buscar_jornadas_acima_de_10h(conn, loja, ano_mes),
+                "menores":         self.buscar_jornadas_irregulares_de_menores(conn, loja, ano_mes),
+                "faltas":          self.buscar_faltas_de_marcacao(conn, loja, ano_mes),
+
+                # Aba 3 — Ranking
+                "top5":            self.buscar_top5_por_tipo_de_irregularidade(conn, loja, ano_mes),
+                "ranking":         self.buscar_ranking_de_funcionarios_por_irregularidades(conn, loja, ano_mes),
             }
         finally:
             conn.close()
@@ -263,8 +278,7 @@ class BancoDeDados:
                 COUNT(DISTINCT j.id_funcionario)                           AS funcionarios,
                 SUM(CASE
                         WHEN s.tipo_status IN ('EXTRA','JORNADA_LONGA')
-                         AND j.minutos_trabalhados > {MINUTOS_GATILHO_EXTRA}
-                        THEN j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL}
+                        THEN MAX(0, j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL})
                         ELSE 0
                     END) / 60.0                                            AS horas_extras,
                 COUNT(DISTINCT CASE
@@ -280,33 +294,337 @@ class BancoDeDados:
             {where}
         """, conn, params=p).iloc[0]
 
-        _minutos = round(float(row["horas_extras"] or 0) * 60)
-
         return {
             "total_funcionarios":              int(row["funcionarios"] or 0),
-            "total_horas_extras": f"{_minutos // 60:02d}:{_minutos % 60:02d}",
+            "total_horas_extras":              round(float(row["horas_extras"] or 0), 1),
             "total_intervalos_irregulares":    int(row["intervalos_irreg"] or 0),
             "total_faltas_marcacao":           int(row["faltas"] or 0),
             "total_interjornadas_irregulares": int(row["interjornadas_irreg"] or 0),
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # INTERJORNADA — scatter + tabela de irregulares
+    # SCORE DE RISCO TRABALHISTA
+    # Pesos conforme tabela definida. Jornada > 12h recebe peso 4 (diferente
+    # de jornada > 10h que recebe peso 2), calculado pela duração em minutos.
     # ─────────────────────────────────────────────────────────────────────────
 
-    def buscar_dados_interjornada(self, conn, loja, ano_mes) -> dict | None:
+    def calcular_score_de_risco_trabalhista(self, conn, loja, ano_mes) -> dict:
+        where, p = self._montar_filtro_sql(loja, ano_mes)
+
+        df = pd.read_sql_query(f"""
+            SELECT
+                s.tipo_status,
+                COUNT(*) AS total,
+                j.minutos_trabalhados
+            FROM jornadas j
+            JOIN funcionarios f ON f.id = j.id_funcionario
+            JOIN status_jornada s ON s.id_jornada = j.id
+            {where}
+            GROUP BY s.tipo_status, j.minutos_trabalhados
+        """, conn, params=p)
+
+        if df.empty:
+            return {"score": 0, "classificacao": "Baixo", "detalhes": []}
+
+        score = 0
+        detalhes = []
+
+        for tipo, grupo in df.groupby("tipo_status"):
+            # FALTA_DE_MARCACAO não entra no score de risco trabalhista
+            if tipo == "FALTA_DE_MARCACAO":
+                continue
+
+            # Jornada sem intervalo só é irregularidade acima de 6h trabalhadas (360 min)
+            if tipo == "JORNADA_SEM_INTERVALO":
+                grupo = grupo[grupo["minutos_trabalhados"] > 360]
+                if grupo.empty:
+                    continue
+
+            contagem = int(grupo["total"].sum())
+
+            if tipo == "JORNADA_LONGA":
+                # Separa > 10h (peso 2) de > 12h (peso 4)
+                acima_12h = int(grupo[grupo["minutos_trabalhados"] > 720]["total"].sum())
+                entre_10_12h = contagem - acima_12h
+
+                if entre_10_12h > 0:
+                    pts = entre_10_12h * 2
+                    score += pts
+                    detalhes.append(("Jornada > 10h", entre_10_12h, 2, pts))
+                if acima_12h > 0:
+                    pts = acima_12h * 4
+                    score += pts
+                    detalhes.append(("Jornada > 12h", acima_12h, 4, pts))
+                continue
+
+            peso = PESOS_RISCO.get(tipo)
+            if peso is None:
+                continue
+
+            pts = contagem * peso
+            score += pts
+
+            nomes_legiveis = {
+                "INTERVALO_CURTO":             "Intervalo < 1h",
+                "JORNADA_SEM_INTERVALO": "JORNADA_SEM_INTERVALO_ACIMA_6H",
+                "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
+                "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
+            }
+            detalhes.append((nomes_legiveis.get(tipo, tipo), contagem, peso, pts))
+
+        # Ordena pelos pontos gerados (maior risco primeiro)
+        detalhes.sort(key=lambda x: x[3], reverse=True)
+
+        if score <= FAIXA_RISCO_BAIXO:
+            classificacao = "Baixo"
+        elif score <= FAIXA_RISCO_MEDIO:
+            classificacao = "Médio"
+        else:
+            classificacao = "Alto"
+
+        return {
+            "score":          score,
+            "classificacao":  classificacao,
+            "detalhes": [
+                {"irregularidade": d[0], "ocorrencias": d[1], "peso": d[2], "pontos": d[3]}
+                for d in detalhes
+            ],
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # RANKING DE FUNCIONÁRIOS — pontuação de risco por pessoa
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def buscar_ranking_de_funcionarios_por_irregularidades(self, conn, loja, ano_mes) -> dict | None:
         """
-        Retorna dois conjuntos:
-        - scatter: todos os pontos de interjornada (data, horas, nome, irregular)
-        - tabela:  apenas as interjornadas abaixo de 11h, para exibição detalhada
+        Calcula o score de risco individual de cada funcionário aplicando
+        os mesmos pesos do score geral. Retorna top 15 para o gráfico
+        e top 10 para a tabela detalhada.
         """
-        where, p = self._montar_filtro_sql(loja, ano_mes, "j.minutos_interjornada IS NOT NULL")
+        where, p = self._montar_filtro_sql(loja, ano_mes)
 
         df = pd.read_sql_query(f"""
             SELECT
                 f.nome,
-                j.data,
-                j.minutos_interjornada
+                s.tipo_status,
+                COUNT(*) AS total,
+                SUM(j.minutos_trabalhados) AS min_trab
+            FROM jornadas j
+            JOIN funcionarios f ON f.id = j.id_funcionario
+            JOIN status_jornada s ON s.id_jornada = j.id
+            {where}
+            GROUP BY f.nome, s.tipo_status
+        """, conn, params=p)
+
+        if df.empty:
+            return None
+
+        # Aplica pesos — jornada longa > 12h recebe peso diferenciado
+        def calcular_pontos(row):
+            tipo = row["tipo_status"]
+            n    = row["total"]
+
+            if tipo == "JORNADA_LONGA":
+                # Aproximação: usa minutos médios por ocorrência
+                min_medio = (row["min_trab"] / n) if n > 0 else 0
+                return n * (4 if min_medio > 720 else 2)
+
+            return n * PESOS_RISCO.get(tipo, 0)
+
+        df["pontos"] = df.apply(calcular_pontos, axis=1)
+
+        ranking = (
+            df.groupby("nome")["pontos"]
+            .sum()
+            .reset_index()
+            .sort_values("pontos", ascending=False)
+        )
+
+        # Contagem de tipos distintos de irregularidade por funcionário
+        tipos_por_nome = (
+            df[df["pontos"] > 0]
+            .groupby("nome")["tipo_status"]
+            .nunique()
+            .reset_index()
+            .rename(columns={"tipo_status": "tipos_distintos"})
+        )
+        ranking = ranking.merge(tipos_por_nome, on="nome", how="left").fillna(0)
+        ranking["tipos_distintos"] = ranking["tipos_distintos"].astype(int)
+
+        top15 = ranking.head(15)
+        top10 = ranking.head(10)
+
+        nomes_legiveis = {
+            "INTERVALO_CURTO":             "Intervalo < 1h",
+            "INTERVALO_LONGO":             "Intervalo Longo",
+            "JORNADA_SEM_INTERVALO": "Intervalo inexistente",
+            "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
+            "JORNADA_LONGA":               "Jornada Longa",
+            "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
+            "FALTA_DE_MARCACAO":           "Falta de marcação",
+            "EXTRA":                       "Hora Extra",
+            "JORNADA_CURTA":               "Jornada Curta",
+        }
+
+        # Detalhamento por funcionário — para o painel de clique na tabela
+        detalhamento_por_nome: dict[str, list[dict]] = {}
+        for nome, grupo in df[df["pontos"] > 0].groupby("nome"):
+            itens = (
+                grupo[["tipo_status", "total", "pontos"]]
+                .sort_values("pontos", ascending=False)
+                .to_dict(orient="records")
+            )
+            detalhamento_por_nome[nome] = [
+                {
+                    "irregularidade": nomes_legiveis.get(i["tipo_status"], i["tipo_status"]),
+                    "ocorrencias":    int(i["total"]),
+                    "pontos":         int(i["pontos"]),
+                }
+                for i in itens
+            ]
+
+        return {
+            "grafico_labels":         top15["nome"].apply(lambda n: n.split()[0]).tolist(),
+            "grafico_nomes":          top15["nome"].tolist(),
+            "grafico_valores":        top15["pontos"].astype(int).tolist(),
+            "tabela": [
+                {
+                    "Nome":   row["nome"],
+                    "Pontos": int(row["pontos"]),
+                    "Tipos":  int(row["tipos_distintos"]),
+                }
+                for _, row in top10.iterrows()
+            ],
+            "total_real":             len(ranking),
+            "detalhamento_por_nome":  detalhamento_por_nome,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # INTERVALOS IRREGULARES
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def buscar_intervalos_irregulares(self, conn, loja, ano_mes) -> dict | None:
+        where, p = self._montar_filtro_sql(
+            loja, ano_mes, "s.tipo_status IN ('INTERVALO_CURTO','INTERVALO_LONGO')"
+        )
+
+        df = pd.read_sql_query(f"""
+            SELECT
+                s.tipo_status,
+                COUNT(*)             AS total,
+                COUNT(DISTINCT j.id) AS jornadas_unicas
+            FROM jornadas j
+            JOIN funcionarios f ON f.id = j.id_funcionario
+            JOIN status_jornada s ON s.id_jornada = j.id
+            {where}
+            GROUP BY s.tipo_status
+        """, conn, params=p)
+
+        if df.empty:
+            return None
+
+        total_afetadas = int(df["jornadas_unicas"].sum())
+        df["tipo_status"] = df["tipo_status"].replace({
+            "INTERVALO_CURTO": "Curtos",
+            "INTERVALO_LONGO": "Longos",
+        })
+
+        return {
+            "total_intervalos_irregulares": total_afetadas,
+            "labels": df["tipo_status"].tolist(),
+            "values": df["total"].tolist(),
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # FALTAS DE MARCAÇÃO
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def buscar_faltas_de_marcacao(self, conn, loja, ano_mes) -> dict | None:
+        where, p = self._montar_filtro_sql(loja, ano_mes, "s.tipo_status = 'FALTA_DE_MARCACAO'")
+
+        df = pd.read_sql_query(f"""
+            SELECT f.nome, j.data
+            FROM jornadas j
+            JOIN funcionarios f ON f.id = j.id_funcionario
+            JOIN status_jornada s ON s.id_jornada = j.id
+            {where}
+            ORDER BY j.data
+        """, conn, params=p)
+
+        if df.empty:
+            return None
+
+        df["data"] = pd.to_datetime(df["data"])
+        por_data   = df.groupby("data").size().reset_index(name="total")
+        por_nome   = df.groupby("nome").size().reset_index(name="total") \
+                       .sort_values("total", ascending=False).head(5)
+
+        return {
+            "labels_faltas_marcacao":  por_data["data"].dt.strftime("%d/%m").tolist(),
+            "values_faltas_marcacao":  por_data["total"].tolist(),
+            "total_faltas":            int(por_data["total"].sum()),
+            "top_funcionarios_labels": por_nome["nome"].tolist(),
+            "top_funcionarios_values": por_nome["total"].tolist(),
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TOP 5 — uma query, pivot em Python
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def buscar_top5_por_tipo_de_irregularidade(self, conn, loja, ano_mes) -> dict:
+        where, p = self._montar_filtro_sql(loja, ano_mes)
+
+        df = pd.read_sql_query(f"""
+            SELECT s.tipo_status, f.nome, COUNT(*) AS total
+            FROM jornadas j
+            JOIN funcionarios f ON f.id = j.id_funcionario
+            JOIN status_jornada s ON s.id_jornada = j.id
+            {where}
+            GROUP BY s.tipo_status, f.nome
+            ORDER BY s.tipo_status, total DESC
+        """, conn, params=p)
+
+        mapeamento = {
+            "FALTA_DE_MARCACAO":           "faltas_marcacao",
+            "EXTRA":                       "extras",
+            "JORNADA_LONGA":               "jornadas_longas",
+            "JORNADA_SEM_INTERVALO": "jornadas_sem_intervalo",
+            "INTERVALO_CURTO":             "intervalos_irregulares",
+            "INTERVALO_LONGO":             "intervalos_irregulares",
+            "INTERJORNADA_IRREGULAR":      "interjornada_irregular",
+        }
+
+        resultado = {chave: {"labels": [], "values": []} for chave in set(mapeamento.values())}
+
+        if df.empty:
+            return resultado
+
+        df["categoria"] = df["tipo_status"].map(mapeamento)
+        df = df.dropna(subset=["categoria"])
+
+        for categoria, grupo in df.groupby("categoria"):
+            top = (
+                grupo.groupby("nome")["total"].sum()
+                .reset_index()
+                .sort_values("total", ascending=False)
+                .head(5)
+            )
+            resultado[categoria] = {
+                "labels": top["nome"].tolist(),
+                "values": top["total"].tolist(),
+            }
+
+        return resultado
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # INTERJORNADA
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def buscar_dados_interjornada(self, conn, loja, ano_mes) -> dict | None:
+        where, p = self._montar_filtro_sql(loja, ano_mes, "j.minutos_interjornada IS NOT NULL")
+
+        df = pd.read_sql_query(f"""
+            SELECT f.nome, j.data, j.minutos_interjornada
             FROM jornadas j
             JOIN funcionarios f ON f.id = j.id_funcionario
             {where}
@@ -316,31 +634,28 @@ class BancoDeDados:
         if df.empty:
             return None
 
-        df["horas_interjornada"] = df["minutos_interjornada"] / 60
-        df["irregular"]          = df["minutos_interjornada"] < MINUTOS_INTERJORNADA_MINIMA
-        df["data_fmt"]           = pd.to_datetime(df["data"]).dt.strftime("%d/%m")
+        df["horas"]     = df["minutos_interjornada"] / 60
+        df["irregular"] = df["minutos_interjornada"] < MINUTOS_INTERJORNADA_MINIMA
+        df["data_fmt"]  = pd.to_datetime(df["data"]).dt.strftime("%d/%m")
 
-        # Tabela apenas das irregulares
-        df_irreg = df[df["irregular"]].copy()
-        df_irreg["Horas"] = df_irreg["horas_interjornada"].apply(
-            lambda h: f"{int(h):02d}:{int((h % 1) * 60):02d}"
-        )
-        df_irreg = df_irreg.rename(columns={"nome": "Nome", "data_fmt": "Data"})
+        df_irreg          = df[df["irregular"]].copy()
+        df_irreg["Horas"] = df_irreg["horas"].apply(lambda h: f"{int(h):02d}:{int((h%1)*60):02d}")
+        df_irreg          = df_irreg.rename(columns={"nome": "Nome", "data_fmt": "Data"})
+
+        total_real = len(df_irreg)
 
         return {
-            # Scatter — todos os pontos
-            "scatter_datas":    df["data_fmt"].tolist(),
-            "scatter_horas":    [round(h, 2) for h in df["horas_interjornada"].tolist()],
-            "scatter_nomes":    df["nome"].tolist(),
-            "scatter_irregular":df["irregular"].tolist(),   # bool por ponto
-
-            # Tabela de irregulares
-            "tabela": df_irreg[["Nome", "Data", "Horas"]].to_dict(orient="records")
-                      if not df_irreg.empty else [],
+            "scatter_datas":     df["data_fmt"].tolist(),
+            "scatter_horas":     [round(h, 2) for h in df["horas"].tolist()],
+            "scatter_nomes":     df["nome"].tolist(),
+            "scatter_irregular": df["irregular"].tolist(),
+            "tabela":            df_irreg[["Nome", "Data", "Horas"]].head(10).to_dict(orient="records")
+                                 if not df_irreg.empty else [],
+            "total_real":        total_real,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # DISTRIBUIÇÃO
+    # DISTRIBUIÇÃO DE JORNADA
     # ─────────────────────────────────────────────────────────────────────────
 
     def calcular_distribuicao_jornadas(self, conn, loja, ano_mes) -> dict | None:
@@ -349,8 +664,8 @@ class BancoDeDados:
         df = pd.read_sql_query(f"""
             SELECT
                 CASE
-                    WHEN minutos_trabalhados <=  440 THEN 'Até 07:20h'
-                    WHEN minutos_trabalhados <=  600 THEN '07:20h – 10h'
+                    WHEN minutos_trabalhados <=  480 THEN 'Até 8h'
+                    WHEN minutos_trabalhados <=  600 THEN '8h – 10h'
                     ELSE '>10h'
                 END AS faixa,
                 COUNT(*) AS total
@@ -363,7 +678,7 @@ class BancoDeDados:
         if df.empty:
             return None
 
-        ordem  = ["Até 07:20h", "07:20h – 10h", ">10h"]
+        ordem  = ["Até 8h", "8h – 10h", ">10h"]
         lookup = dict(zip(df["faixa"], df["total"]))
 
         return {
@@ -373,24 +688,18 @@ class BancoDeDados:
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # EVOLUÇÃO DE EXTRAS
+    # EVOLUÇÃO DE HORAS EXTRAS
     # ─────────────────────────────────────────────────────────────────────────
 
     def calcular_evolucao_horas_extras(self, conn, loja, ano_mes) -> dict | None:
         where, p = self._montar_filtro_sql(
-            loja, ano_mes, "s.tipo_status IN ('EXTRA', 'JORNADA_LONGA')"
+            loja, ano_mes, "s.tipo_status IN ('EXTRA','JORNADA_LONGA')"
         )
 
         df = pd.read_sql_query(f"""
             SELECT
                 j.ano_mes,
-                SUM(
-                    CASE
-                        WHEN j.minutos_trabalhados > {MINUTOS_GATILHO_EXTRA}
-                        THEN j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL}
-                        ELSE 0
-                    END
-                ) / 60.0 AS horas
+                SUM(MAX(0, j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL})) / 60.0 AS horas
             FROM jornadas j
             JOIN funcionarios f ON f.id = j.id_funcionario
             JOIN status_jornada s ON s.id_jornada = j.id
@@ -432,7 +741,7 @@ class BancoDeDados:
             "INTERVALO_CURTO":             "Intervalo Curto",
             "INTERVALO_LONGO":             "Intervalo Longo",
             "JORNADA_LONGA":               "Jornada Longa",
-            "JORNADA_6HORAS_SEM_INTERVALO": "Jornada s/ Intervalo",
+            "JORNADA_SEM_INTERVALO": "Jornada s/ Intervalo",
             "JORNADA_CURTA":               "Jornada Curta",
             "EXTRA":                       "Hora Extra",
             "JORNADA_IRREGULAR_MENOR":     "Menor Irregular",
@@ -441,89 +750,6 @@ class BancoDeDados:
         df["tipo_status"] = df["tipo_status"].replace(nomes_legiveis)
 
         return {"labels": df["tipo_status"].tolist(), "values": df["total"].tolist()}
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # INTERVALOS IRREGULARES
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def buscar_intervalos_irregulares(self, conn, loja, ano_mes) -> dict | None:
-        where, p = self._montar_filtro_sql(
-            loja, ano_mes, "s.tipo_status IN ('INTERVALO_CURTO','INTERVALO_LONGO')"
-        )
-
-        df = pd.read_sql_query(f"""
-            SELECT s.tipo_status, COUNT(*) AS total
-            FROM jornadas j
-            JOIN funcionarios f ON f.id = j.id_funcionario
-            JOIN status_jornada s ON s.id_jornada = j.id
-            {where}
-            GROUP BY s.tipo_status
-        """, conn, params=p)
-
-        if df.empty:
-            return None
-
-        df["tipo_status"] = df["tipo_status"].replace({
-            "INTERVALO_CURTO": "Curtos",
-            "INTERVALO_LONGO": "Longos",
-        })
-
-        total_afetadas = int(df["total"].sum())
-
-        # Base correta para a pizza: jornadas com 4 batidas (única situação onde
-        # o intervalo é calculado). Usa filtro só de loja/mês, sem filtro de status.
-        where_base, p_base = self._montar_filtro_sql(loja, ano_mes, "j.qtd_batidas = 4")
-        total_base = pd.read_sql_query(f"""
-            SELECT COUNT(*) AS total
-            FROM jornadas j
-            JOIN funcionarios f ON f.id = j.id_funcionario
-            {where_base}
-        """, conn, params=p_base)["total"].iloc[0]
-
-        return {
-            "total_intervalos_irregulares": total_afetadas,
-            "total_base_intervalo":         int(total_base),
-            "labels":                       df["tipo_status"].tolist(),
-            "values":                       df["total"].tolist(),
-        }
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # FALTAS DE MARCAÇÃO
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def buscar_faltas_de_marcacao(self, conn, loja, ano_mes) -> dict | None:
-        where, p = self._montar_filtro_sql(loja, ano_mes, "s.tipo_status = 'FALTA_DE_MARCACAO'")
-
-        df_datas = pd.read_sql_query(f"""
-            SELECT j.data, COUNT(*) AS total
-            FROM jornadas j
-            JOIN funcionarios f ON f.id = j.id_funcionario
-            JOIN status_jornada s ON s.id_jornada = j.id
-            {where}
-            GROUP BY j.data ORDER BY j.data
-        """, conn, params=p)
-
-        df_top = pd.read_sql_query(f"""
-            SELECT f.nome, COUNT(*) AS total
-            FROM jornadas j
-            JOIN funcionarios f ON f.id = j.id_funcionario
-            JOIN status_jornada s ON s.id_jornada = j.id
-            {where}
-            GROUP BY f.nome ORDER BY total DESC LIMIT 5
-        """, conn, params=p)
-
-        if df_datas.empty:
-            return None
-
-        df_datas["data"] = pd.to_datetime(df_datas["data"]).dt.strftime("%d/%m")
-
-        return {
-            "labels_faltas_marcacao":  df_datas["data"].tolist(),
-            "values_faltas_marcacao":  df_datas["total"].tolist(),
-            "total_faltas":            int(df_datas["total"].sum()),
-            "top_funcionarios_labels": df_top["nome"].tolist(),
-            "top_funcionarios_values": df_top["total"].tolist(),
-        }
 
     # ─────────────────────────────────────────────────────────────────────────
     # JORNADAS SEM IRREGULARIDADE
@@ -547,7 +773,7 @@ class BancoDeDados:
     # MENORES IRREGULARES
     # ─────────────────────────────────────────────────────────────────────────
 
-    def buscar_jornadas_irregulares_de_menores(self, conn, loja, ano_mes) -> list[dict] | None:
+    def buscar_jornadas_irregulares_de_menores(self, conn, loja, ano_mes) -> dict | None:
         where, p = self._montar_filtro_sql(
             loja, ano_mes, 's.tipo_status = "JORNADA_IRREGULAR_MENOR"'
         )
@@ -564,14 +790,16 @@ class BancoDeDados:
         if df.empty:
             return None
 
+        total_real = len(df)
+        df         = df.head(10)
         df["Data"] = pd.to_datetime(df["Data"]).dt.strftime("%d/%m/%Y")
-        return df.to_dict(orient="records")
+        return {"registros": df.to_dict(orient="records"), "total_real": total_real}
 
     # ─────────────────────────────────────────────────────────────────────────
     # JORNADAS ACIMA DE 10H
     # ─────────────────────────────────────────────────────────────────────────
 
-    def buscar_jornadas_acima_de_10h(self, conn, loja, ano_mes) -> list[dict] | None:
+    def buscar_jornadas_acima_de_10h(self, conn, loja, ano_mes) -> dict | None:
         where, p = self._montar_filtro_sql(loja, ano_mes, "s.tipo_status = 'JORNADA_LONGA'")
 
         df = pd.read_sql_query(f"""
@@ -587,39 +815,11 @@ class BancoDeDados:
         if df.empty:
             return None
 
+        total_real  = len(df)
+        df          = df.head(10)
         df["Data"]  = pd.to_datetime(df["Data"]).dt.strftime("%d/%m/%Y")
         df["Horas"] = df["minutos"].apply(lambda m: f"{m // 60:02d}:{m % 60:02d}")
-        return df[["Nome", "Data", "Horas", "Loja"]].to_dict(orient="records")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # TOP 5
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def buscar_top5_por_tipo_de_irregularidade(self, conn, loja, ano_mes) -> dict:
-        categorias = {
-            "faltas_marcacao":               "s.tipo_status = 'FALTA_DE_MARCACAO'",
-            "extras":                        "s.tipo_status = 'EXTRA'",
-            "jornadas_longas":               "s.tipo_status = 'JORNADA_LONGA'",
-            "jornadas_longas_sem_intervalo": "s.tipo_status = 'JORNADA_6HORAS_SEM_INTERVALO'",
-            "intervalos_irregulares":        "s.tipo_status IN ('INTERVALO_CURTO','INTERVALO_LONGO')",
-            "interjornada_irregular":        "s.tipo_status = 'INTERJORNADA_IRREGULAR'",
+        return {
+            "registros":  df[["Nome", "Data", "Horas", "Loja"]].to_dict(orient="records"),
+            "total_real": total_real,
         }
-
-        resultado = {}
-        for chave, condicao in categorias.items():
-            where, p = self._montar_filtro_sql(loja, ano_mes, condicao)
-            df = pd.read_sql_query(f"""
-                SELECT f.nome, COUNT(*) AS total
-                FROM jornadas j
-                JOIN funcionarios f ON f.id = j.id_funcionario
-                JOIN status_jornada s ON s.id_jornada = j.id
-                {where}
-                GROUP BY f.nome ORDER BY total DESC LIMIT 5
-            """, conn, params=p)
-
-            resultado[chave] = {
-                "labels": df["nome"].tolist() if not df.empty else [],
-                "values": df["total"].tolist() if not df.empty else [],
-            }
-
-        return resultado

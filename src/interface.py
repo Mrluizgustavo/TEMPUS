@@ -79,10 +79,9 @@ class AppPonto(ctk.CTk):
             command=self.abrir_tela_dashboard
         ).grid(row=2, column=0, padx=20, pady=10)
 
-        # Separador — inserido no grid apenas quando o dashboard estiver aberto
         self.separador_sidebar = ctk.CTkFrame(self.sidebar_frame, height=1, fg_color="#444")
 
-        # ── Painel de filtros — oculto até o dashboard ser aberto ─────────────
+        # ── Painel de filtros ─────────────────────────────────────────────────
         self.painel_filtros = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
 
         ctk.CTkLabel(
@@ -112,11 +111,12 @@ class AppPonto(ctk.CTk):
         )
         self.seletor_mes.pack(padx=16, pady=(4, 12))
 
-        ctk.CTkButton(
+        self.btn_aplicar_filtros = ctk.CTkButton(
             self.painel_filtros, text="Aplicar Filtros",
             fg_color="#8A2BE2", hover_color="#4B0082",
             command=self._aplicar_filtros_e_recarregar
-        ).pack(padx=16, pady=(0, 16), fill="x")
+        )
+        self.btn_aplicar_filtros.pack(padx=16, pady=(0, 16), fill="x")
 
         # ── Container principal ───────────────────────────────────────────────
         self.container = ctk.CTkFrame(self, fg_color="transparent")
@@ -128,8 +128,39 @@ class AppPonto(ctk.CTk):
         self.frames["Home"] = HomeFrame(parent=self.container, controller=self)
         self.frames["Home"].grid(row=0, column=0, sticky="nsew")
 
+        # Frame de carregamento — exibido enquanto o banco e o Matplotlib trabalham
+        self.frames["Loading"] = self._criar_frame_de_carregamento()
+        self.frames["Loading"].grid(row=0, column=0, sticky="nsew")
+
         self.show_frame("Home")
         self._configurar_icone()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # FRAME DE CARREGAMENTO
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _criar_frame_de_carregamento(self) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(self.container, fg_color="transparent")
+
+        ctk.CTkLabel(
+            frame, text="Carregando dashboard...",
+            font=("Roboto", 16), text_color="gray"
+        ).place(relx=0.5, rely=0.45, anchor="center")
+
+        self.barra_progresso = ctk.CTkProgressBar(frame, mode="indeterminate", width=260)
+        self.barra_progresso.place(relx=0.5, rely=0.55, anchor="center")
+
+        return frame
+
+    def _exibir_tela_de_carregamento(self):
+        """Mostra o spinner e desabilita o botão para evitar cliques duplos."""
+        self.show_frame("Loading")
+        self.barra_progresso.start()
+        self.btn_aplicar_filtros.configure(state="disabled")
+
+    def _encerrar_tela_de_carregamento(self):
+        self.barra_progresso.stop()
+        self.btn_aplicar_filtros.configure(state="normal")
 
     # ─────────────────────────────────────────────────────────────────────────
     # NAVEGAÇÃO
@@ -166,6 +197,10 @@ class AppPonto(ctk.CTk):
         if self.var_mes_selecionado.get() not in meses:
             self.var_mes_selecionado.set(OPCAO_TODOS_MESES)
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # CARREGAMENTO DO DASHBOARD EM THREAD
+    # ─────────────────────────────────────────────────────────────────────────
+
     def _aplicar_filtros_e_recarregar(self):
         loja    = self.var_loja_selecionada.get()
         mes_ano = self.var_mes_selecionado.get()
@@ -173,16 +208,16 @@ class AppPonto(ctk.CTk):
         loja_param    = None if loja    == OPCAO_TODAS_LOJAS else loja
         mes_ano_param = None if mes_ano == OPCAO_TODOS_MESES else mes_ano
 
-        dados = BancoDeDados().buscar_dados_dashboard(loja=loja_param, mes_ano=mes_ano_param)
-        self._reconstruir_tela_dashboard(dados)
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # DASHBOARD
-    # ─────────────────────────────────────────────────────────────────────────
+        self._exibir_tela_de_carregamento()
+        threading.Thread(
+            target=self._buscar_dados_e_reconstruir_dashboard,
+            args=(loja_param, mes_ano_param),
+            daemon=True
+        ).start()
 
     def abrir_tela_dashboard(self):
-        banco                = BancoDeDados()
-        filtros_disponiveis  = banco.buscar_filtros_disponiveis()
+        banco               = BancoDeDados()
+        filtros_disponiveis = banco.buscar_filtros_disponiveis()
 
         if not filtros_disponiveis["lojas"] and not filtros_disponiveis["meses"]:
             messagebox.showwarning(
@@ -192,9 +227,36 @@ class AppPonto(ctk.CTk):
 
         self._preencher_opcoes_de_filtro(filtros_disponiveis)
         self._exibir_painel_de_filtros()
-        self._reconstruir_tela_dashboard(banco.buscar_dados_dashboard())
+        self._exibir_tela_de_carregamento()
+
+        threading.Thread(
+            target=self._buscar_dados_e_reconstruir_dashboard,
+            args=(None, None),
+            daemon=True
+        ).start()
+
+    def _buscar_dados_e_reconstruir_dashboard(self, loja_param, mes_ano_param):
+        """
+        Roda em thread separada — busca os dados do banco e agenda a
+        reconstrução do dashboard na thread principal via self.after().
+        Tkinter não é thread-safe: todo acesso a widgets deve acontecer
+        na thread principal, por isso o after() é obrigatório aqui.
+        """
+        try:
+            dados = BancoDeDados().buscar_dados_dashboard(
+                loja=loja_param, mes_ano=mes_ano_param
+            )
+            self.after(0, self._reconstruir_tela_dashboard, dados)
+        except Exception as e:
+            self.after(0, self._encerrar_tela_de_carregamento)
+            self.after(0, lambda: messagebox.showerror("Erro", f"Falha ao carregar dashboard:\n{e}"))
 
     def _reconstruir_tela_dashboard(self, dados):
+        """
+        Sempre chamada via self.after() — roda na thread principal do Tkinter.
+        """
+        self._encerrar_tela_de_carregamento()
+
         if "Dashboard" in self.frames:
             self.frames["Dashboard"].destroy()
 
@@ -332,8 +394,6 @@ class HomeFrame(ctk.CTkFrame):
         os.makedirs(caminho, exist_ok=True)
         os.startfile(caminho)
 
-    # ── ETAPA 1 ───────────────────────────────────────────────────────────────
-
     def iniciar_geracao_planilha_revisao(self):
         dt_ini = dt_fim = None
 
@@ -350,7 +410,8 @@ class HomeFrame(ctk.CTkFrame):
         self.btn_gerar_revisao.configure(state="disabled", text="Processando...")
         self.btn_confirmar.configure(state="disabled")
         threading.Thread(
-            target=self._executar_geracao_planilha_revisao, args=(dt_ini, dt_fim)
+            target=self._executar_geracao_planilha_revisao,
+            args=(dt_ini, dt_fim), daemon=True
         ).start()
 
     def _executar_geracao_planilha_revisao(self, dt_ini, dt_fim):
@@ -389,8 +450,6 @@ class HomeFrame(ctk.CTkFrame):
         self.btn_confirmar.configure(state="normal")
         self.btn_abrir_pasta.pack(pady=(0, 5))
 
-    # ── ETAPA 2 ───────────────────────────────────────────────────────────────
-
     def iniciar_geracao_relatorio_final(self):
         caminho_revisao = ExcelReporterRevisao.caminho_revisao()
         if not os.path.exists(caminho_revisao):
@@ -402,7 +461,8 @@ class HomeFrame(ctk.CTkFrame):
 
         self.btn_confirmar.configure(state="disabled", text="Processando...")
         threading.Thread(
-            target=self._executar_geracao_relatorio_final, args=(caminho_revisao,)
+            target=self._executar_geracao_relatorio_final,
+            args=(caminho_revisao,), daemon=True
         ).start()
 
     def _executar_geracao_relatorio_final(self, caminho_revisao: str):
