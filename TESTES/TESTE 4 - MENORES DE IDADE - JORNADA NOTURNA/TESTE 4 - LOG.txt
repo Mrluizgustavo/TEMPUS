@@ -1,0 +1,12 @@
+Arquivo carregado com sucesso!
+Salvando 4 registros no histórico...
+✅ Dados salvos com sucesso!
+Classificando 4 jornadas em abas...
+============================================================
+✅ SUCESSO! Relatório salvo em: data/output\Relatorio_Final.xlsx
+   - Faltas de Marcação: 0
+   - Batida Irregular Menores: 2
+   - Durações Irregulares:   2
+   - Intervalos Irregulares:   0
+   - Validadas:           2
+============================================================
