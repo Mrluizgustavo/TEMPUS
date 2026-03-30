@@ -5,7 +5,8 @@ import pandas as pd
 
 from src.processador import ResultadoJornada
 
-MINUTOS_JORNADA_NORMAL      = 7 * 60 + 35   # 455 min
+MINUTOS_JORNADA_NORMAL      = 7 * 60 + 20   # 440 min — base de cálculo da hora extra
+MINUTOS_TOLERANCIA_EXTRA    = 10             # tolerância: só conta extra acima de 7h30 (450 min)
 MINUTOS_INTERJORNADA_MINIMA = 11 * 60        # 660 min — mínimo legal CLT
 
 # Pesos de risco por tipo de irregularidade (conforme tabela definida)
@@ -278,7 +279,7 @@ class BancoDeDados:
                 COUNT(DISTINCT j.id_funcionario)                           AS funcionarios,
                 SUM(CASE
                         WHEN s.tipo_status IN ('EXTRA','JORNADA_LONGA')
-                        THEN MAX(0, j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL})
+                        THEN CASE WHEN j.minutos_trabalhados > ({MINUTOS_JORNADA_NORMAL} + {MINUTOS_TOLERANCIA_EXTRA}) THEN j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL} ELSE 0 END
                         ELSE 0
                     END) / 60.0                                            AS horas_extras,
                 COUNT(DISTINCT CASE
@@ -294,9 +295,11 @@ class BancoDeDados:
             {where}
         """, conn, params=p).iloc[0]
 
+        total_minutos_extras = int(round((float(row["horas_extras"] or 0)) * 60))
+
         return {
             "total_funcionarios":              int(row["funcionarios"] or 0),
-            "total_horas_extras":              round(float(row["horas_extras"] or 0), 1),
+            "total_horas_extras":              total_minutos_extras,
             "total_intervalos_irregulares":    int(row["intervalos_irreg"] or 0),
             "total_faltas_marcacao":           int(row["faltas"] or 0),
             "total_interjornadas_irregulares": int(row["interjornadas_irreg"] or 0),
@@ -311,6 +314,15 @@ class BancoDeDados:
     def calcular_score_de_risco_trabalhista(self, conn, loja, ano_mes) -> dict:
         where, p = self._montar_filtro_sql(loja, ano_mes)
 
+        # Conta funcionários da loja/período para normalizar o score
+        row_func = pd.read_sql_query(f"""
+            SELECT COUNT(DISTINCT j.id_funcionario) AS total_func
+            FROM jornadas j
+            JOIN funcionarios f ON f.id = j.id_funcionario
+            {where}
+        """, conn, params=p).iloc[0]
+        total_funcionarios = max(int(row_func["total_func"] or 1), 1)
+
         df = pd.read_sql_query(f"""
             SELECT
                 s.tipo_status,
@@ -324,10 +336,20 @@ class BancoDeDados:
         """, conn, params=p)
 
         if df.empty:
-            return {"score": 0, "classificacao": "Baixo", "detalhes": []}
+            return {"score": 0, "score_normalizado": 0, "classificacao": "Baixo", "detalhes": [], "total_funcionarios": total_funcionarios}
 
-        score = 0
+        score_bruto = 0
         detalhes = []
+
+        nomes_legiveis = {
+            "INTERVALO_CURTO":         "Intervalo curto",
+            "INTERVALO_LONGO":         "Intervalo longo",
+            "JORNADA_SEM_INTERVALO":   "Jornada sem intervalo",
+            "INTERJORNADA_IRREGULAR":  "Interjornada irregular",
+            "JORNADA_IRREGULAR_MENOR": "Menor após 22h",
+            "EXTRA":                   "Hora extra",
+            "JORNADA_CURTA":           "Jornada curta",
+        }
 
         for tipo, grupo in df.groupby("tipo_status"):
             # FALTA_DE_MARCACAO não entra no score de risco trabalhista
@@ -343,18 +365,18 @@ class BancoDeDados:
             contagem = int(grupo["total"].sum())
 
             if tipo == "JORNADA_LONGA":
-                # Separa > 10h (peso 2) de > 12h (peso 4)
-                acima_12h = int(grupo[grupo["minutos_trabalhados"] > 720]["total"].sum())
+                # Separa +10h (peso 2) de +12h (peso 4)
+                acima_12h    = int(grupo[grupo["minutos_trabalhados"] > 720]["total"].sum())
                 entre_10_12h = contagem - acima_12h
 
                 if entre_10_12h > 0:
                     pts = entre_10_12h * 2
-                    score += pts
-                    detalhes.append(("Jornada > 10h", entre_10_12h, 2, pts))
+                    score_bruto += pts
+                    detalhes.append(("Jornada +10h", entre_10_12h, 2, pts))
                 if acima_12h > 0:
                     pts = acima_12h * 4
-                    score += pts
-                    detalhes.append(("Jornada > 12h", acima_12h, 4, pts))
+                    score_bruto += pts
+                    detalhes.append(("Jornada +12h", acima_12h, 4, pts))
                 continue
 
             peso = PESOS_RISCO.get(tipo)
@@ -362,29 +384,27 @@ class BancoDeDados:
                 continue
 
             pts = contagem * peso
-            score += pts
-
-            nomes_legiveis = {
-                "INTERVALO_CURTO":             "Intervalo < 1h",
-                "JORNADA_SEM_INTERVALO": "JORNADA_SEM_INTERVALO_ACIMA_6H",
-                "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
-                "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
-            }
+            score_bruto += pts
             detalhes.append((nomes_legiveis.get(tipo, tipo), contagem, peso, pts))
 
         # Ordena pelos pontos gerados (maior risco primeiro)
         detalhes.sort(key=lambda x: x[3], reverse=True)
 
-        if score <= FAIXA_RISCO_BAIXO:
+        # Normaliza pelo número de funcionários — score por pessoa (arredondado)
+        score_normalizado = round(score_bruto / total_funcionarios, 1)
+
+        if score_normalizado <= FAIXA_RISCO_BAIXO:
             classificacao = "Baixo"
-        elif score <= FAIXA_RISCO_MEDIO:
+        elif score_normalizado <= FAIXA_RISCO_MEDIO:
             classificacao = "Médio"
         else:
             classificacao = "Alto"
 
         return {
-            "score":          score,
-            "classificacao":  classificacao,
+            "score":              score_bruto,
+            "score_normalizado":  score_normalizado,
+            "classificacao":      classificacao,
+            "total_funcionarios": total_funcionarios,
             "detalhes": [
                 {"irregularidade": d[0], "ocorrencias": d[1], "peso": d[2], "pontos": d[3]}
                 for d in detalhes
@@ -459,7 +479,7 @@ class BancoDeDados:
             "INTERVALO_LONGO":             "Intervalo Longo",
             "JORNADA_SEM_INTERVALO": "Intervalo inexistente",
             "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
-            "JORNADA_LONGA":               "Jornada Longa",
+            "JORNADA_LONGA":               "Jornada +10h",
             "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
             "FALTA_DE_MARCACAO":           "Falta de marcação",
             "EXTRA":                       "Hora Extra",
@@ -664,8 +684,8 @@ class BancoDeDados:
         df = pd.read_sql_query(f"""
             SELECT
                 CASE
-                    WHEN minutos_trabalhados <=  480 THEN 'Até 8h'
-                    WHEN minutos_trabalhados <=  600 THEN '8h – 10h'
+                    WHEN minutos_trabalhados <= 440 THEN 'Até 7h20'
+                    WHEN minutos_trabalhados <= 600 THEN '7h20 – 10h'
                     ELSE '>10h'
                 END AS faixa,
                 COUNT(*) AS total
@@ -678,7 +698,7 @@ class BancoDeDados:
         if df.empty:
             return None
 
-        ordem  = ["Até 8h", "8h – 10h", ">10h"]
+        ordem  = ["Até 7h20", "7h20 – 10h", ">10h"]
         lookup = dict(zip(df["faixa"], df["total"]))
 
         return {
@@ -699,7 +719,7 @@ class BancoDeDados:
         df = pd.read_sql_query(f"""
             SELECT
                 j.ano_mes,
-                SUM(MAX(0, j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL})) / 60.0 AS horas
+                SUM(CASE WHEN j.minutos_trabalhados > ({MINUTOS_JORNADA_NORMAL} + {MINUTOS_TOLERANCIA_EXTRA}) THEN j.minutos_trabalhados - {MINUTOS_JORNADA_NORMAL} ELSE 0 END) / 60.0 AS horas
             FROM jornadas j
             JOIN funcionarios f ON f.id = j.id_funcionario
             JOIN status_jornada s ON s.id_jornada = j.id
@@ -740,7 +760,7 @@ class BancoDeDados:
             "FALTA_DE_MARCACAO":           "Falta de Marcação",
             "INTERVALO_CURTO":             "Intervalo Curto",
             "INTERVALO_LONGO":             "Intervalo Longo",
-            "JORNADA_LONGA":               "Jornada Longa",
+            "JORNADA_LONGA":               "Jornada +10h",
             "JORNADA_SEM_INTERVALO": "Jornada s/ Intervalo",
             "JORNADA_CURTA":               "Jornada Curta",
             "EXTRA":                       "Hora Extra",

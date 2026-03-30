@@ -21,7 +21,8 @@ class ResultadoJornada:
     intervalo:           str
     # Tempo entre o fim desta jornada e o início da próxima do mesmo funcionário.
     # None significa que não há jornada anterior para comparar (primeira do período).
-    minutos_interjornada: int | None = field(default=None)
+    minutos_interjornada:    int | None = field(default=None)
+    multipla_jornada_no_dia: bool       = field(default=False)
 
 
 class Processador:
@@ -250,7 +251,7 @@ class Processador:
                 batidas          = batidas_texto,
                 status           = status,
                 duracao          = duracao,
-                intervalo        = intervalo,
+                intervalo        = intervalo
             ))
 
         # Calcula interjornadas após ter todas as jornadas do período montadas

@@ -28,7 +28,7 @@ TOP5_OPCOES_E_CHAVES = {
     "Faltas de Marcação":     "faltas_marcacao",
     "Intervalos Irregulares": "intervalos_irregulares",
     "Horas Extras":           "extras",
-    "Jornadas Longas":        "jornadas_longas",
+    "Jornadas +10h":        "jornadas_longas",
     "Jornadas s/ Intervalo":  "jornadas_sem_intervalo",
     "Interjornada Irregular": "interjornada_irregular",
 }
@@ -37,7 +37,7 @@ TOP5_COR_POR_OPCAO = {
     "Faltas de Marcação":     COR_VERMELHO,
     "Intervalos Irregulares": COR_AMARELO,
     "Horas Extras":           COR_AZUL,
-    "Jornadas Longas":        COR_VERMELHO,
+    "Jornadas +10h":        COR_VERMELHO,
     "Jornadas s/ Intervalo":  COR_AMARELO,
     "Interjornada Irregular": COR_VERMELHO,
 }
@@ -285,7 +285,7 @@ class DashboardWindow(ctk.CTkFrame):
 
         cards = [
             ("👥 Funcionários\nanalisados",   kpis["total_funcionarios"]              if kpis else "—", "#1565C0"),
-            ("⏱ Horas extras\nno período",    f'{kpis["total_horas_extras"]}h'        if kpis else "—", "#6A1B9A"),
+            ("⏱ Horas extras\nno período",    f'{kpis["total_horas_extras"] // 60:02d}:{kpis["total_horas_extras"] % 60:02d}'  if kpis else "—", "#6A1B9A"),
             ("🔔 Intervalos\nirregulares",     kpis["total_intervalos_irregulares"]    if kpis else "—", COR_AMARELO),
             ("❌ Faltas de\nmarcação",          kpis["total_faltas_marcacao"]           if kpis else "—", COR_VERMELHO),
             ("🌙 Interjornadas\nirregulares",  kpis["total_interjornadas_irregulares"] if kpis else "—", "#B71C1C"),
@@ -311,15 +311,16 @@ class DashboardWindow(ctk.CTkFrame):
         if not dados_risco:
             return
 
-        score         = dados_risco["score"]
-        classificacao = dados_risco["classificacao"]
-        detalhes      = dados_risco["detalhes"]
-        cor_class     = COR_RISCO.get(classificacao, "#555")
+        score             = dados_risco["score"]
+        score_norm        = dados_risco.get("score_normalizado", score)
+        total_func        = dados_risco.get("total_funcionarios", 1)
+        classificacao     = dados_risco["classificacao"]
+        detalhes          = dados_risco["detalhes"]
+        cor_class         = COR_RISCO.get(classificacao, "#555")
 
-        # Faixas de risco: Baixo 0-50, Médio 50-150, Alto >150
-        # Normaliza o score para posição na barra (0.0 a 1.0), com cap em 200
+        # Faixas de risco: Baixo 0-50, Médio 50-150, Alto >150 (score normalizado por funcionário)
         SCORE_MAX = 200
-        posicao   = min(score / SCORE_MAX, 1.0)
+        posicao   = min(score_norm / SCORE_MAX, 1.0)
 
         container = ctk.CTkFrame(parent, fg_color="#1e1e1e", corner_radius=12)
         container.pack(fill="x", padx=8, pady=(5, 10))
@@ -359,7 +360,7 @@ class DashboardWindow(ctk.CTkFrame):
         ax_title.axis("off")
         ax_title.text(0.5, 0.7, "Score de Risco Trabalhista",
                       ha="center", va="center", fontsize=8, color="#aaa")
-        ax_title.text(0.5, 0.1, f"{score} pontos — Risco {classificacao}",
+        ax_title.text(0.5, 0.1, f"{score_norm} pts/func ({score} total, {total_func} func) — Risco {classificacao}",
                       ha="center", va="center", fontsize=10,
                       color=cor_class, fontweight="bold")
 
@@ -492,7 +493,7 @@ class DashboardWindow(ctk.CTkFrame):
         values = dados["values"]
         paleta = {
             "Falta de Marcação":     COR_VERMELHO, "Intervalo Curto":       COR_AMARELO,
-            "Intervalo Longo":       COR_AMARELO,  "Jornada Longa":         COR_VERMELHO,
+            "Intervalo Longo":       COR_AMARELO,  "Jornada +10h":         COR_VERMELHO,
             "Jornada s/ Intervalo":  COR_VERMELHO, "Jornada Curta":         COR_AMARELO,
             "Hora Extra":            COR_AZUL,     "Menor Irregular":       "#e91e63",
             "Interjornada Irregular":"#B71C1C",
