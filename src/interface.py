@@ -13,6 +13,7 @@ from src.reporter_revisao import ExcelReporterRevisao
 from src.leitor_revisao import LeitorRevisao
 from src.database import BancoDeDados
 from src.view_dashboard import DashboardWindow
+from src.view_configuracoes import ConfiguracoesWindow
 
 
 OPCAO_TODAS_LOJAS = "Todas as lojas"
@@ -46,7 +47,7 @@ class AppPonto(ctk.CTk):
         self.sidebar_frame = ctk.CTkFrame(self, width=210, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_propagate(False)
-        self.sidebar_frame.grid_rowconfigure(5, weight=1)
+        self.sidebar_frame.grid_rowconfigure(6, weight=1)
 
         ctk.CTkLabel(
             self.sidebar_frame, text="TEMPUS",
@@ -78,6 +79,12 @@ class AppPonto(ctk.CTk):
             fg_color="#8A2BE2", hover_color="#4B0082",
             command=self.abrir_tela_dashboard
         ).grid(row=2, column=0, padx=20, pady=10)
+
+        ctk.CTkButton(
+            self.sidebar_frame, text="⚙ Configurações",
+            fg_color="#3a3a3a", hover_color="#2a2a2a",
+            command=self.abrir_tela_configuracoes
+        ).grid(row=3, column=0, padx=20, pady=(0, 10))
 
         self.separador_sidebar = ctk.CTkFrame(self.sidebar_frame, height=1, fg_color="#444")
 
@@ -269,6 +276,19 @@ class AppPonto(ctk.CTk):
     # ─────────────────────────────────────────────────────────────────────────
     # UTILITÁRIOS
     # ─────────────────────────────────────────────────────────────────────────
+
+    def abrir_tela_configuracoes(self):
+        self._ocultar_painel_de_filtros()
+
+        if "Configuracoes" in self.frames:
+            self.frames["Configuracoes"].destroy()
+
+        banco = BancoDeDados()
+        self.frames["Configuracoes"] = ConfiguracoesWindow(
+            parent=self.container, controller=self, banco=banco
+        )
+        self.frames["Configuracoes"].grid(row=0, column=0, sticky="nsew")
+        self.show_frame("Configuracoes")
 
     def reiniciar(self, event=None):
         self.destroy()

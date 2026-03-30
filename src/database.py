@@ -91,8 +91,75 @@ class BancoDeDados:
         except:
             pass
 
+        # Tabela de pesos de risco configuráveis pelo usuário
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS config_pesos (
+                chave  TEXT PRIMARY KEY,
+                peso   INTEGER NOT NULL
+            )
+        """)
+
+        # Insere os pesos padrão apenas se a tabela estiver vazia
+        pesos_padrao = [
+            ("INTERVALO_CURTO",         2),
+            ("INTERVALO_LONGO",         1),
+            ("JORNADA_SEM_INTERVALO",   4),
+            ("INTERJORNADA_IRREGULAR",  3),
+            ("JORNADA_IRREGULAR_MENOR", 5),
+            ("JORNADA_LONGA_10",        2),
+            ("JORNADA_LONGA_12",        4),
+        ]
+        cur.executemany(
+            "INSERT OR IGNORE INTO config_pesos (chave, peso) VALUES (?, ?)",
+            pesos_padrao
+        )
+
         conn.commit()
         conn.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PESOS DE RISCO — leitura, salvamento e restauração
+    # ─────────────────────────────────────────────────────────────────────────
+
+    PESOS_PADRAO = {
+        "INTERVALO_CURTO":         2,
+        "INTERVALO_LONGO":         1,
+        "JORNADA_SEM_INTERVALO":   4,
+        "INTERJORNADA_IRREGULAR":  3,
+        "JORNADA_IRREGULAR_MENOR": 5,
+        "JORNADA_LONGA_10":        2,
+        "JORNADA_LONGA_12":        4,
+    }
+
+    def buscar_pesos_risco(self) -> dict[str, int]:
+        """Retorna os pesos configurados no banco. Cai no padrão se uma chave faltar."""
+        conn = self._conectar()
+        try:
+            rows = conn.execute("SELECT chave, peso FROM config_pesos").fetchall()
+            pesos = {chave: peso for chave, peso in rows}
+            # Garante que todas as chaves existam, usando o padrão como fallback
+            for chave, padrao in self.PESOS_PADRAO.items():
+                pesos.setdefault(chave, padrao)
+            return pesos
+        finally:
+            conn.close()
+
+    def salvar_pesos_risco(self, novos_pesos: dict[str, int]):
+        """Atualiza os pesos informados, mantendo os demais inalterados."""
+        conn = self._conectar()
+        try:
+            conn.executemany(
+                "INSERT INTO config_pesos (chave, peso) VALUES (?, ?) "
+                "ON CONFLICT(chave) DO UPDATE SET peso = excluded.peso",
+                list(novos_pesos.items())
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def restaurar_pesos_padrao(self):
+        """Sobrescreve todos os pesos com os valores padrão do sistema."""
+        self.salvar_pesos_risco(self.PESOS_PADRAO)
 
     # ─────────────────────────────────────────────────────────────────────────
     # SALVAR
@@ -312,6 +379,9 @@ class BancoDeDados:
     # ─────────────────────────────────────────────────────────────────────────
 
     def calcular_score_de_risco_trabalhista(self, conn, loja, ano_mes) -> dict:
+        # Lê pesos do banco — respeita configurações do usuário
+        pesos = self.buscar_pesos_risco()
+
         where, p = self._montar_filtro_sql(loja, ano_mes)
 
         # Conta funcionários da loja/período para normalizar o score
@@ -365,21 +435,23 @@ class BancoDeDados:
             contagem = int(grupo["total"].sum())
 
             if tipo == "JORNADA_LONGA":
-                # Separa +10h (peso 2) de +12h (peso 4)
+                # Separa +10h de +12h com pesos configuráveis
+                p10 = pesos.get("JORNADA_LONGA_10", 2)
+                p12 = pesos.get("JORNADA_LONGA_12", 4)
                 acima_12h    = int(grupo[grupo["minutos_trabalhados"] > 720]["total"].sum())
                 entre_10_12h = contagem - acima_12h
 
                 if entre_10_12h > 0:
-                    pts = entre_10_12h * 2
+                    pts = entre_10_12h * p10
                     score_bruto += pts
-                    detalhes.append(("Jornada +10h", entre_10_12h, 2, pts))
+                    detalhes.append(("Jornada +10h", entre_10_12h, p10, pts))
                 if acima_12h > 0:
-                    pts = acima_12h * 4
+                    pts = acima_12h * p12
                     score_bruto += pts
-                    detalhes.append(("Jornada +12h", acima_12h, 4, pts))
+                    detalhes.append(("Jornada +12h", acima_12h, p12, pts))
                 continue
 
-            peso = PESOS_RISCO.get(tipo)
+            peso = pesos.get(tipo)
             if peso is None:
                 continue
 
