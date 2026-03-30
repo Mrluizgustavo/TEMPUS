@@ -81,7 +81,8 @@ class ExcelReporter:
 
             "JORNADA_LONGA": "JORNADAS_IRREGULARES",
             "JORNADA_CURTA": "JORNADAS_IRREGULARES",
-            "JORNADA_SEM_INTERVALO": "JORNADAS_IRREGULARES"
+            "JORNADA_SEM_INTERVALO": "JORNADAS_IRREGULARES",
+            "INTERJORNADA_IRREGULAR" : "INTERJORNADA_IRREGULAR"
         }
 
         abas = {
@@ -90,7 +91,8 @@ class ExcelReporter:
             "JORNADA_IRREGULAR_MENOR": [],
             "FALTA_DE_MARCACAO": [],
             "INTERVALOS_IRREGULARES": [],
-            "JORNADAS_IRREGULARES": []
+            "JORNADAS_IRREGULARES": [],
+            "INTERJORNADA_IRREGULAR" : []
         }
 
         for r in resultados:
@@ -137,6 +139,11 @@ class ExcelReporter:
             categoria="JORNADAS_IRREGULARES"
         )
 
+        df_interjornadas = self._criar_dataframe(
+            abas["INTERJORNADA_IRREGULAR"],
+            categoria="INTERJORNADA_IRREGULAR"
+        )
+
         # 4. Gravação do Arquivo com Abas
         caminho_pasta = "data/output"
         os.makedirs(caminho_pasta, exist_ok=True)
@@ -169,8 +176,12 @@ class ExcelReporter:
                 if not df_extra.empty:
                     df_extra.to_excel(writer, sheet_name='EXTRA', index=False)
 
+                # Aba 7: Interjornada
+                if not df_interjornadas.empty:
+                    df_interjornadas.to_excel(writer, sheet_name='INTERJORNADA', index=False)
 
-                # Aba 7: Validadas
+
+                # Aba 8: Validadas
                 if not df_ok.empty:
                     df_ok.to_excel(writer, sheet_name='JORNADAS VALIDADAS', index=False)
 
@@ -180,6 +191,7 @@ class ExcelReporter:
             print(f"   - Batida Irregular Menores: {len(abas["JORNADA_IRREGULAR_MENOR"])}")
             print(f"   - Durações Irregulares:   {len(abas["JORNADAS_IRREGULARES"])}")
             print(f"   - Intervalos Irregulares:   {len(abas["INTERVALOS_IRREGULARES"])}")
+            print(f"   - Interjornadas:   {len(abas["INTERJORNADA_IRREGULAR"])}")
             print(f"   - Validadas:           {len(abas["OK"])}")
             print("=" * 60)
 

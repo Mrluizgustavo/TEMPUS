@@ -1,6 +1,5 @@
 import pandas as pd
 import os
-from datetime import datetime
 from .processador import Processador, ResultadoJornada
 from .reporter_revisao import ExcelReporterRevisao
 
@@ -54,7 +53,11 @@ class LeitorRevisao:
                 for b in batidas_series
             ]
 
-            data_obj = datetime.strptime(data_str, "%Y-%m-%d")
+            # Usa o horário real da primeira batida — essencial para que
+            # calcular_interjornadas consiga reconstruir o fim da jornada
+            # anterior com precisão. Usar apenas a data (00:00:00) causaria
+            # erros de até 23h no cálculo do intervalo entre jornadas.
+            data_obj = batidas_series.iloc[0].to_pydatetime()
             id_jornada += 1
 
             # Recupera a sinalização de múltiplas jornadas gravada na coluna REVISAR,

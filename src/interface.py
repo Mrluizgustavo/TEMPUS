@@ -496,6 +496,9 @@ class HomeFrame(ctk.CTkFrame):
                     state="normal", text="REVISÃO CONCLUÍDA — GERAR RELATÓRIO E SALVAR"))
                 return
 
+            self.log("Calculando interjornadas...")
+            resultados = Processador.calcular_interjornadas(resultados)
+
             self.log(f"Calculadas {len(resultados)} jornadas. Salvando no banco...")
             BancoDeDados().salvar_jornadas(resultados)
 

@@ -153,6 +153,11 @@ class Processador:
         return alertas, duracao_str, intervalo_str, idade
 
     def _calcular_interjornadas(self, resultados: list[ResultadoJornada]) -> list[ResultadoJornada]:
+        """Wrapper de instância — delega ao método estático reutilizável."""
+        return Processador.calcular_interjornadas(resultados)
+
+    @staticmethod
+    def calcular_interjornadas(resultados: list[ResultadoJornada]) -> list[ResultadoJornada]:
         """
         Para cada funcionário, percorre suas jornadas em ordem cronológica e
         calcula o tempo entre o fim de uma e o início da próxima.
@@ -162,6 +167,9 @@ class Processador:
 
         Jornadas com FALTA_DE_MARCACAO são ignoradas no cálculo porque não
         temos a hora de saída real, o que tornaria o resultado inválido.
+
+        Método estático para permitir reutilização fora do fluxo do Processador
+        (ex: após LeitorRevisao.carregar_e_recalcular na Etapa 2).
         """
         # Agrupa por funcionário preservando a ordem de inserção (já cronológica)
         jornadas_por_funcionario: dict[str, list[ResultadoJornada]] = {}
@@ -188,11 +196,11 @@ class Processador:
                     fim_jornada_anterior = (
                         jornada_anterior.data_inicio_obj + pd.Timedelta(hours=h, minutes=m)
                     )
-                except:
+                except Exception:
                     continue
 
-                inicio_jornada_atual  = jornada_atual.data_inicio_obj
-                minutos_interjornada  = int(
+                inicio_jornada_atual = jornada_atual.data_inicio_obj
+                minutos_interjornada = int(
                     (inicio_jornada_atual - fim_jornada_anterior).total_seconds() / 60
                 )
 
