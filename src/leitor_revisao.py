@@ -32,6 +32,9 @@ class LeitorRevisao:
                 val = str(row[col]).strip()
                 if val == "" or val.lower() == "nan":
                     continue
+                # Remove prefixo de dia seguinte "(DD) " gravado pelo reporter_revisao
+                if val.startswith("("):
+                    val = val[val.find(" ") + 1:].strip()
                 try:
                     batidas_dt.append(pd.Timestamp(f"{data_str} {val}"))
                 except Exception:

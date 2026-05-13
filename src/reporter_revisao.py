@@ -46,7 +46,7 @@ class ExcelReporterRevisao:
                 # Remove prefixo de dia seguinte "(DD) " para deixar só "HH:MM"
                 horario_limpo = horario
                 if horario.startswith("("):
-                    horario_limpo = horario[6:].strip()
+                    horario_limpo = horario[5:].strip()
                 linha[f"BAT{i + 1}"] = horario_limpo
 
             linhas.append(linha)

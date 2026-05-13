@@ -11,13 +11,11 @@ MINUTOS_INTERJORNADA_MINIMA = 11 * 60        # 660 min — mínimo legal CLT
 
 # Pesos de risco por tipo de irregularidade (conforme tabela definida)
 PESOS_RISCO = {
-    "INTERVALO_CURTO":             2,   # Intervalo < 1h
-    "JORNADA_SEM_INTERVALO": 4,   # Intervalo inexistente
-    "INTERJORNADA_IRREGULAR":      3,   # Descanso < 11h
-    "JORNADA_LONGA":               2,   # Jornada > 10h (base)
-    # Jornada > 12h recebe peso 4 — tratado separadamente no cálculo
-    "JORNADA_IRREGULAR_MENOR":     5,   # Menor após 22h
-    # FALTA_DE_MARCACAO removida do score de risco trabalhista
+    "INTERVALO_CURTO":         2,
+    "JORNADA_SEM_INTERVALO":   4,
+    "INTERJORNADA_IRREGULAR":  3,
+    "JORNADA_LONGA":           2,
+    "JORNADA_IRREGULAR_MENOR": 5,
 }
 
 # Faixas do score de risco para classificação visual
@@ -80,16 +78,48 @@ class BancoDeDados:
             )
         """)
 
+        # ── Usuários do sistema ───────────────────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome          TEXT    NOT NULL UNIQUE,
+                senha_hash    TEXT    NOT NULL,
+                role          TEXT    NOT NULL DEFAULT 'operador',
+                ativo         INTEGER NOT NULL DEFAULT 1,
+                trocar_senha  INTEGER NOT NULL DEFAULT 0,
+                criado_em     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ── Auditoria — registra toda ação relevante do sistema ───────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS logs_auditoria (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id_usuario   INTEGER,
+                nome_usuario TEXT,
+                acao         TEXT    NOT NULL,
+                detalhe      TEXT,
+                ip_maquina   TEXT,
+                timestamp    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (id_usuario) REFERENCES usuarios(id)
+            )
+        """)
+
         cur.execute("CREATE INDEX IF NOT EXISTS idx_func_chapa      ON funcionarios(chapa)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_func_loja       ON funcionarios(loja)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jornada_func    ON jornadas(id_funcionario)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jornada_ano_mes ON jornadas(ano_mes)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_status_tipo     ON status_jornada(tipo_status, id_jornada)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp  ON logs_auditoria(timestamp DESC)")
 
-        try:
-            cur.execute("ALTER TABLE jornadas ADD COLUMN minutos_interjornada INTEGER")
-        except:
-            pass
+        # Migrações seguras para bancos existentes
+        for col_def in [
+            "ALTER TABLE jornadas ADD COLUMN minutos_interjornada INTEGER",
+        ]:
+            try:
+                cur.execute(col_def)
+            except Exception:
+                pass
 
         # Tabela de pesos de risco configuráveis pelo usuário
         cur.execute("""
@@ -99,7 +129,6 @@ class BancoDeDados:
             )
         """)
 
-        # Insere os pesos padrão apenas se a tabela estiver vazia
         pesos_padrao = [
             ("INTERVALO_CURTO",         2),
             ("INTERVALO_LONGO",         1),
@@ -114,11 +143,31 @@ class BancoDeDados:
             pesos_padrao
         )
 
+        # Seed: cria os 3 usuários padrão se ainda não existir nenhum master
+        import bcrypt as _bcrypt
+        master_existe = cur.execute(
+            "SELECT 1 FROM usuarios WHERE role = 'master'"
+        ).fetchone()
+        if not master_existe:
+            usuarios_seed = [
+                # (nome, senha_env, senha_padrao, role)
+                ("Master","MASTER_SENHA_INICIAL",   "Master@123",   "master"),
+                ("Admin", "ADMIN_SENHA_INICIAL",    "Admin@123",    "admin"),
+                ("Operador","OPERADOR_SENHA_INICIAL", "Operador@123", "operador"),
+            ]
+            for nome, env_var, senha_padrao, role in usuarios_seed:
+                senha = os.environ.get(env_var, senha_padrao)
+                senha_hash = _bcrypt.hashpw(senha.encode(), _bcrypt.gensalt()).decode()
+                cur.execute("""
+                    INSERT OR IGNORE INTO usuarios (nome, senha_hash, role, trocar_senha)
+                    VALUES (?, ?, ?, 1)
+                """, (nome, senha_hash, role))
+
         conn.commit()
         conn.close()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # PESOS DE RISCO — leitura, salvamento e restauração
+    # PESOS DE RISCO
     # ─────────────────────────────────────────────────────────────────────────
 
     PESOS_PADRAO = {
@@ -132,12 +181,10 @@ class BancoDeDados:
     }
 
     def buscar_pesos_risco(self) -> dict[str, int]:
-        """Retorna os pesos configurados no banco. Cai no padrão se uma chave faltar."""
         conn = self._conectar()
         try:
-            rows = conn.execute("SELECT chave, peso FROM config_pesos").fetchall()
+            rows  = conn.execute("SELECT chave, peso FROM config_pesos").fetchall()
             pesos = {chave: peso for chave, peso in rows}
-            # Garante que todas as chaves existam, usando o padrão como fallback
             for chave, padrao in self.PESOS_PADRAO.items():
                 pesos.setdefault(chave, padrao)
             return pesos
@@ -145,7 +192,6 @@ class BancoDeDados:
             conn.close()
 
     def salvar_pesos_risco(self, novos_pesos: dict[str, int]):
-        """Atualiza os pesos informados, mantendo os demais inalterados."""
         conn = self._conectar()
         try:
             conn.executemany(
@@ -158,11 +204,188 @@ class BancoDeDados:
             conn.close()
 
     def restaurar_pesos_padrao(self):
-        """Sobrescreve todos os pesos com os valores padrão do sistema."""
         self.salvar_pesos_risco(self.PESOS_PADRAO)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SALVAR
+    # AUTENTICAÇÃO E USUÁRIOS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def autenticar_usuario(self, nome: str, senha: str) -> dict | None:
+        """
+        Verifica credenciais usando bcrypt.
+        Retorna dict com dados do usuário ou None se inválido/desativado.
+        """
+        import bcrypt
+        conn = self._conectar()
+        try:
+            row = conn.execute(
+                "SELECT id, nome, senha_hash, role, ativo, trocar_senha "
+                "FROM usuarios WHERE LOWER(nome) = LOWER(?)",
+                (nome.strip(),)
+            ).fetchone()
+
+            if not row:
+                return None
+
+            id_, nome_db, senha_hash, role, ativo, trocar_senha = row
+
+            if not ativo:
+                return None
+
+            if not bcrypt.checkpw(senha.encode(), senha_hash.encode()):
+                return None
+
+            return {
+                "id":           id_,
+                "nome":         nome_db,
+                "email":        nome_db,   # mantido por compatibilidade com logs existentes
+                "role":         role,
+                "trocar_senha": bool(trocar_senha),
+            }
+        finally:
+            conn.close()
+
+    def cadastrar_usuario(self, nome: str, senha: str, role: str = "operador"):
+        """Insere novo usuário com senha hasheada. trocar_senha=1 força troca no 1º login."""
+        if role not in ("master", "admin", "operador"):
+            raise ValueError(f"Role inválido: '{role}'. Use 'master', 'admin' ou 'operador'.")
+        import bcrypt
+        senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt()).decode()
+        conn = self._conectar()
+        try:
+            conn.execute("""
+                INSERT INTO usuarios (nome, senha_hash, role, trocar_senha)
+                VALUES (?, ?, ?, 1)
+            """, (nome.strip(), senha_hash, role))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def alterar_senha(self, id_usuario: int, nova_senha: str):
+        """Atualiza o hash da senha e limpa a flag de troca obrigatória."""
+        import bcrypt
+        novo_hash = bcrypt.hashpw(nova_senha.encode(), bcrypt.gensalt()).decode()
+        conn = self._conectar()
+        try:
+            conn.execute(
+                "UPDATE usuarios SET senha_hash = ?, trocar_senha = 0 WHERE id = ?",
+                (novo_hash, id_usuario)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def listar_usuarios(self, role_solicitante: str = "master") -> list[dict]:
+        conn = self._conectar()
+        try:
+            # Admin não enxerga usuários master — apenas o master vê todos
+            if role_solicitante == "master":
+                rows = conn.execute(
+                    "SELECT id, nome, role, ativo, criado_em "
+                    "FROM usuarios ORDER BY nome"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, nome, role, ativo, criado_em "
+                    "FROM usuarios WHERE role != 'master' ORDER BY nome"
+                ).fetchall()
+            return [
+                {"id": r[0], "nome": r[1],
+                 "role": r[2], "ativo": bool(r[3]), "criado_em": r[4]}
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    def ativar_desativar_usuario(self, id_usuario: int, ativo: bool):
+        """Desativa ou reativa uma conta sem apagar dados históricos."""
+        conn = self._conectar()
+        try:
+            conn.execute(
+                "UPDATE usuarios SET ativo = ? WHERE id = ?",
+                (1 if ativo else 0, id_usuario)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # AUDITORIA / LOGS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def registrar_log(self, acao: str, detalhe: str = "",
+                      id_usuario: int = None, email: str = None):
+        """
+        Grava uma entrada de auditoria.
+        Chamado em: login, troca de senha, análise, relatório, configurações.
+        O parâmetro `email` é mantido por compatibilidade — internamente gravado como nome_usuario.
+        """
+        import socket
+        try:
+            maquina = socket.gethostname()
+        except Exception:
+            maquina = "desconhecido"
+
+        conn = self._conectar()
+        try:
+            conn.execute("""
+                INSERT INTO logs_auditoria (id_usuario, nome_usuario, acao, detalhe, ip_maquina)
+                VALUES (?, ?, ?, ?, ?)
+            """, (id_usuario, email, acao, detalhe, maquina))
+            conn.commit()
+        except Exception:
+            pass  # log nunca deve derrubar o fluxo principal
+        finally:
+            conn.close()
+
+    def buscar_logs(self, limite: int = 300, filtro_acao: str = None,
+                    filtro_email: str = None) -> list[dict]:
+        """
+        Retorna entradas de auditoria, das mais recentes para as mais antigas.
+        Suporta filtro opcional por ação e por nome do usuário.
+        """
+        conn = self._conectar()
+        try:
+            partes = []
+            params = []
+            if filtro_acao:
+                partes.append("acao = ?")
+                params.append(filtro_acao)
+            if filtro_email:
+                partes.append("nome_usuario LIKE ?")
+                params.append(f"%{filtro_email}%")
+            where = ("WHERE " + " AND ".join(partes)) if partes else ""
+
+            params.append(limite)
+            rows = conn.execute(f"""
+                SELECT timestamp, nome_usuario, acao, detalhe, ip_maquina
+                FROM logs_auditoria
+                {where}
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, params).fetchall()
+
+            return [
+                {"timestamp": r[0], "email": r[1] or "—",
+                 "acao": r[2], "detalhe": r[3] or "", "maquina": r[4] or "—"}
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    def contar_logs_por_acao(self) -> dict[str, int]:
+        """Resumo de quantas vezes cada tipo de ação foi registrada."""
+        conn = self._conectar()
+        try:
+            rows = conn.execute(
+                "SELECT acao, COUNT(*) FROM logs_auditoria GROUP BY acao ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            return {r[0]: r[1] for r in rows}
+        finally:
+            conn.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SALVAR JORNADAS
     # ─────────────────────────────────────────────────────────────────────────
 
     def salvar_jornadas(self, resultados: list[ResultadoJornada]):
@@ -183,7 +406,7 @@ class BancoDeDados:
 
         chapas = list({r.chapa for r in resultados})
         cur.execute(
-            f"SELECT chapa, id FROM funcionarios WHERE chapa IN ({','.join('?'*len(chapas))})",
+            f"SELECT chapa, id FROM funcionarios WHERE chapa IN ({','.join(['?']*len(chapas))})",
             chapas
         )
         id_por_chapa = dict(cur.fetchall())
@@ -217,7 +440,7 @@ class BancoDeDados:
         cur.execute(
             f"""SELECT id_funcionario || '|' || data AS chave, id
                 FROM jornadas
-                WHERE id_funcionario || '|' || data IN ({','.join('?'*len(chaves))})""",
+                WHERE id_funcionario || '|' || data IN ({','.join(['?']*len(chaves))})""",
             chaves
         )
         id_por_jornada = {
@@ -227,7 +450,7 @@ class BancoDeDados:
 
         ids = list(id_por_jornada.values())
         cur.execute(
-            f"DELETE FROM status_jornada WHERE id_jornada IN ({','.join('?'*len(ids))})", ids
+            f"DELETE FROM status_jornada WHERE id_jornada IN ({','.join(['?']*len(ids))})", ids
         )
         novos_status = [
             (id_por_jornada[(id_por_chapa[r.chapa], r.data_inicio_str)], s)
@@ -253,13 +476,13 @@ class BancoDeDados:
         try:
             h, m = map(int, duracao.split(":"))
             return h * 60 + m
-        except:
+        except Exception:
             return 0
 
     def _converter_intervalo_para_minutos(self, intervalo: str) -> int:
         try:
             return round(float(intervalo) * 60)
-        except:
+        except Exception:
             return 0
 
     def _montar_filtro_sql(self, loja, ano_mes, condicao_extra: str = "") -> tuple[str, list]:
@@ -374,17 +597,12 @@ class BancoDeDados:
 
     # ─────────────────────────────────────────────────────────────────────────
     # SCORE DE RISCO TRABALHISTA
-    # Pesos conforme tabela definida. Jornada > 12h recebe peso 4 (diferente
-    # de jornada > 10h que recebe peso 2), calculado pela duração em minutos.
     # ─────────────────────────────────────────────────────────────────────────
 
     def calcular_score_de_risco_trabalhista(self, conn, loja, ano_mes) -> dict:
-        # Lê pesos do banco — respeita configurações do usuário
         pesos = self.buscar_pesos_risco()
-
         where, p = self._montar_filtro_sql(loja, ano_mes)
 
-        # Conta funcionários da loja/período para normalizar o score
         row_func = pd.read_sql_query(f"""
             SELECT COUNT(DISTINCT j.id_funcionario) AS total_func
             FROM jornadas j
@@ -406,10 +624,11 @@ class BancoDeDados:
         """, conn, params=p)
 
         if df.empty:
-            return {"score": 0, "score_normalizado": 0, "classificacao": "Baixo", "detalhes": [], "total_funcionarios": total_funcionarios}
+            return {"score": 0, "score_normalizado": 0, "classificacao": "Baixo",
+                    "detalhes": [], "total_funcionarios": total_funcionarios}
 
         score_bruto = 0
-        detalhes = []
+        detalhes    = []
 
         nomes_legiveis = {
             "INTERVALO_CURTO":         "Intervalo curto",
@@ -422,11 +641,9 @@ class BancoDeDados:
         }
 
         for tipo, grupo in df.groupby("tipo_status"):
-            # FALTA_DE_MARCACAO não entra no score de risco trabalhista
             if tipo == "FALTA_DE_MARCACAO":
                 continue
 
-            # Jornada sem intervalo só é irregularidade acima de 6h trabalhadas (360 min)
             if tipo == "JORNADA_SEM_INTERVALO":
                 grupo = grupo[grupo["minutos_trabalhados"] > 360]
                 if grupo.empty:
@@ -435,7 +652,6 @@ class BancoDeDados:
             contagem = int(grupo["total"].sum())
 
             if tipo == "JORNADA_LONGA":
-                # Separa +10h de +12h com pesos configuráveis
                 p10 = pesos.get("JORNADA_LONGA_10", 2)
                 p12 = pesos.get("JORNADA_LONGA_12", 4)
                 acima_12h    = int(grupo[grupo["minutos_trabalhados"] > 720]["total"].sum())
@@ -459,10 +675,7 @@ class BancoDeDados:
             score_bruto += pts
             detalhes.append((nomes_legiveis.get(tipo, tipo), contagem, peso, pts))
 
-        # Ordena pelos pontos gerados (maior risco primeiro)
         detalhes.sort(key=lambda x: x[3], reverse=True)
-
-        # Normaliza pelo número de funcionários — score por pessoa (arredondado)
         score_normalizado = round(score_bruto / total_funcionarios, 1)
 
         if score_normalizado <= FAIXA_RISCO_BAIXO:
@@ -484,15 +697,10 @@ class BancoDeDados:
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # RANKING DE FUNCIONÁRIOS — pontuação de risco por pessoa
+    # RANKING DE FUNCIONÁRIOS
     # ─────────────────────────────────────────────────────────────────────────
 
     def buscar_ranking_de_funcionarios_por_irregularidades(self, conn, loja, ano_mes) -> dict | None:
-        """
-        Calcula o score de risco individual de cada funcionário aplicando
-        os mesmos pesos do score geral. Retorna top 15 para o gráfico
-        e top 10 para a tabela detalhada.
-        """
         where, p = self._montar_filtro_sql(loja, ano_mes)
 
         df = pd.read_sql_query(f"""
@@ -511,17 +719,17 @@ class BancoDeDados:
         if df.empty:
             return None
 
-        # Aplica pesos — jornada longa > 12h recebe peso diferenciado
+        pesos_dinamicos = self.buscar_pesos_risco()
+
         def calcular_pontos(row):
             tipo = row["tipo_status"]
             n    = row["total"]
-
             if tipo == "JORNADA_LONGA":
-                # Aproximação: usa minutos médios por ocorrência
                 min_medio = (row["min_trab"] / n) if n > 0 else 0
-                return n * (4 if min_medio > 720 else 2)
-
-            return n * PESOS_RISCO.get(tipo, 0)
+                p12 = pesos_dinamicos.get("JORNADA_LONGA_12", 4)
+                p10 = pesos_dinamicos.get("JORNADA_LONGA_10", 2)
+                return n * (p12 if min_medio > 720 else p10)
+            return n * pesos_dinamicos.get(tipo, 0)
 
         df["pontos"] = df.apply(calcular_pontos, axis=1)
 
@@ -532,7 +740,6 @@ class BancoDeDados:
             .sort_values("pontos", ascending=False)
         )
 
-        # Contagem de tipos distintos de irregularidade por funcionário
         tipos_por_nome = (
             df[df["pontos"] > 0]
             .groupby("nome")["tipo_status"]
@@ -547,18 +754,17 @@ class BancoDeDados:
         top10 = ranking.head(10)
 
         nomes_legiveis = {
-            "INTERVALO_CURTO":             "Intervalo < 1h",
-            "INTERVALO_LONGO":             "Intervalo Longo",
-            "JORNADA_SEM_INTERVALO": "Intervalo inexistente",
-            "INTERJORNADA_IRREGULAR":      "Descanso < 11h",
-            "JORNADA_LONGA":               "Jornada +10h",
-            "JORNADA_IRREGULAR_MENOR":     "Menor após 22h",
-            "FALTA_DE_MARCACAO":           "Falta de marcação",
-            "EXTRA":                       "Hora Extra",
-            "JORNADA_CURTA":               "Jornada Curta",
+            "INTERVALO_CURTO":         "Intervalo < 1h",
+            "INTERVALO_LONGO":         "Intervalo Longo",
+            "JORNADA_SEM_INTERVALO":   "Intervalo inexistente",
+            "INTERJORNADA_IRREGULAR":  "Descanso < 11h",
+            "JORNADA_LONGA":           "Jornada +10h",
+            "JORNADA_IRREGULAR_MENOR": "Menor após 22h",
+            "FALTA_DE_MARCACAO":       "Falta de marcação",
+            "EXTRA":                   "Hora Extra",
+            "JORNADA_CURTA":           "Jornada Curta",
         }
 
-        # Detalhamento por funcionário — para o painel de clique na tabela
         detalhamento_por_nome: dict[str, list[dict]] = {}
         for nome, grupo in df[df["pontos"] > 0].groupby("nome"):
             itens = (
@@ -576,9 +782,9 @@ class BancoDeDados:
             ]
 
         return {
-            "grafico_labels":         top15["nome"].apply(lambda n: n.split()[0]).tolist(),
-            "grafico_nomes":          top15["nome"].tolist(),
-            "grafico_valores":        top15["pontos"].astype(int).tolist(),
+            "grafico_labels":        top15["nome"].apply(lambda n: n.split()[0]).tolist(),
+            "grafico_nomes":         top15["nome"].tolist(),
+            "grafico_valores":       top15["pontos"].astype(int).tolist(),
             "tabela": [
                 {
                     "Nome":   row["nome"],
@@ -587,8 +793,8 @@ class BancoDeDados:
                 }
                 for _, row in top10.iterrows()
             ],
-            "total_real":             len(ranking),
-            "detalhamento_por_nome":  detalhamento_por_nome,
+            "total_real":            len(ranking),
+            "detalhamento_por_nome": detalhamento_por_nome,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -660,7 +866,7 @@ class BancoDeDados:
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # TOP 5 — uma query, pivot em Python
+    # TOP 5 POR TIPO
     # ─────────────────────────────────────────────────────────────────────────
 
     def buscar_top5_por_tipo_de_irregularidade(self, conn, loja, ano_mes) -> dict:
@@ -677,13 +883,13 @@ class BancoDeDados:
         """, conn, params=p)
 
         mapeamento = {
-            "FALTA_DE_MARCACAO":           "faltas_marcacao",
-            "EXTRA":                       "extras",
-            "JORNADA_LONGA":               "jornadas_longas",
-            "JORNADA_SEM_INTERVALO": "jornadas_sem_intervalo",
-            "INTERVALO_CURTO":             "intervalos_irregulares",
-            "INTERVALO_LONGO":             "intervalos_irregulares",
-            "INTERJORNADA_IRREGULAR":      "interjornada_irregular",
+            "FALTA_DE_MARCACAO":       "faltas_marcacao",
+            "EXTRA":                   "extras",
+            "JORNADA_LONGA":           "jornadas_longas",
+            "JORNADA_SEM_INTERVALO":   "jornadas_sem_intervalo",
+            "INTERVALO_CURTO":         "intervalos_irregulares",
+            "INTERVALO_LONGO":         "intervalos_irregulares",
+            "INTERJORNADA_IRREGULAR":  "interjornada_irregular",
         }
 
         resultado = {chave: {"labels": [], "values": []} for chave in set(mapeamento.values())}
@@ -829,15 +1035,15 @@ class BancoDeDados:
             return None
 
         nomes_legiveis = {
-            "FALTA_DE_MARCACAO":           "Falta de Marcação",
-            "INTERVALO_CURTO":             "Intervalo Curto",
-            "INTERVALO_LONGO":             "Intervalo Longo",
-            "JORNADA_LONGA":               "Jornada +10h",
-            "JORNADA_SEM_INTERVALO": "Jornada s/ Intervalo",
-            "JORNADA_CURTA":               "Jornada Curta",
-            "EXTRA":                       "Hora Extra",
-            "JORNADA_IRREGULAR_MENOR":     "Menor Irregular",
-            "INTERJORNADA_IRREGULAR":      "Interjornada Irregular",
+            "FALTA_DE_MARCACAO":       "Falta de Marcação",
+            "INTERVALO_CURTO":         "Intervalo Curto",
+            "INTERVALO_LONGO":         "Intervalo Longo",
+            "JORNADA_LONGA":           "Jornada +10h",
+            "JORNADA_SEM_INTERVALO":   "Jornada s/ Intervalo",
+            "JORNADA_CURTA":           "Jornada Curta",
+            "EXTRA":                   "Hora Extra",
+            "JORNADA_IRREGULAR_MENOR": "Menor Irregular",
+            "INTERJORNADA_IRREGULAR":  "Interjornada Irregular",
         }
         df["tipo_status"] = df["tipo_status"].replace(nomes_legiveis)
 

@@ -1,6 +1,5 @@
-from src.interface import AppPonto
 
+from src.interface import TelaLogin
 
 if __name__ == "__main__":
-    app = AppPonto()
-    app.mainloop()
+    TelaLogin().mainloop()

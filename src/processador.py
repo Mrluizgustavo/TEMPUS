@@ -142,7 +142,7 @@ class Processador:
             if intervalo < (50 / 60): alertas.append("INTERVALO_CURTO")
             if intervalo > (70 / 60): alertas.append("INTERVALO_LONGO")
 
-        if 7.35 < duracao_horas < 10:       alertas.append("EXTRA")
+        if 7.5 < duracao_horas < 10:        alertas.append("EXTRA")
         if duracao_horas > 10:              alertas.append("JORNADA_LONGA")
         if qtd == 2 and duracao_horas > 6:  alertas.append("JORNADA_SEM_INTERVALO")
         if duracao_horas < 4:               alertas.append("JORNADA_CURTA")
@@ -151,10 +151,6 @@ class Processador:
             alertas.append("OK")
 
         return alertas, duracao_str, intervalo_str, idade
-
-    def _calcular_interjornadas(self, resultados: list[ResultadoJornada]) -> list[ResultadoJornada]:
-        """Wrapper de instância — delega ao método estático reutilizável."""
-        return Processador.calcular_interjornadas(resultados)
 
     @staticmethod
     def calcular_interjornadas(resultados: list[ResultadoJornada]) -> list[ResultadoJornada]:
@@ -263,6 +259,6 @@ class Processador:
             ))
 
         # Calcula interjornadas após ter todas as jornadas do período montadas
-        resultados = self._calcular_interjornadas(resultados)
+        resultados = Processador.calcular_interjornadas(resultados)
 
         return resultados

@@ -4,6 +4,20 @@ from .processador import ResultadoJornada
 
 
 class ExcelReporter:
+
+    MAPA_CATEGORIAS = {
+        "OK": "OK",
+        "EXTRA": "EXTRA",
+        "FALTA_DE_MARCACAO": "FALTA_DE_MARCACAO",
+        "JORNADA_IRREGULAR_MENOR": "JORNADA_IRREGULAR_MENOR",
+        "INTERVALO_CURTO": "INTERVALOS_IRREGULARES",
+        "INTERVALO_LONGO": "INTERVALOS_IRREGULARES",
+        "JORNADA_LONGA": "JORNADAS_IRREGULARES",
+        "JORNADA_CURTA": "JORNADAS_IRREGULARES",
+        "JORNADA_SEM_INTERVALO": "JORNADAS_IRREGULARES",
+        "INTERJORNADA_IRREGULAR": "INTERJORNADA_IRREGULAR",
+    }
+
     def _criar_dataframe(self, lista_resultados: list[ResultadoJornada], categoria=None):
 
         if not lista_resultados:
@@ -19,7 +33,7 @@ class ExcelReporter:
             if categoria:
                 status_filtrado = [
                     s for s in r.status
-                    if self.mapa_categorias.get(s.upper()) == categoria
+                    if self.MAPA_CATEGORIAS.get(s.upper()) == categoria
                 ]
                 status_exibicao = " | ".join(status_filtrado)
             else:
@@ -68,23 +82,6 @@ class ExcelReporter:
 
         print(f"Classificando {len(resultados)} jornadas em abas...")
 
-        self.mapa_categorias = {
-            "OK": "OK",
-            "EXTRA": "EXTRA",
-
-            "FALTA_DE_MARCACAO": "FALTA_DE_MARCACAO",
-
-            "JORNADA_IRREGULAR_MENOR":"JORNADA_IRREGULAR_MENOR",
-
-            "INTERVALO_CURTO": "INTERVALOS_IRREGULARES",
-            "INTERVALO_LONGO": "INTERVALOS_IRREGULARES",
-
-            "JORNADA_LONGA": "JORNADAS_IRREGULARES",
-            "JORNADA_CURTA": "JORNADAS_IRREGULARES",
-            "JORNADA_SEM_INTERVALO": "JORNADAS_IRREGULARES",
-            "INTERJORNADA_IRREGULAR" : "INTERJORNADA_IRREGULAR"
-        }
-
         abas = {
             "OK": [],
             "EXTRA": [],
@@ -101,7 +98,7 @@ class ExcelReporter:
             categorias_adicionadas = set()
 
             for status in status_list:
-                categoria = self.mapa_categorias.get(status)
+                categoria = self.MAPA_CATEGORIAS.get(status)
 
                 if categoria and categoria not in categorias_adicionadas:
                     abas[categoria].append(r)
