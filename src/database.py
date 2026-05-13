@@ -151,9 +151,9 @@ class BancoDeDados:
         if not master_existe:
             usuarios_seed = [
                 # (nome, senha_env, senha_padrao, role)
-                ("Master",        "MASTER_SENHA_INICIAL",   "Master@123",   "master"),
-                ("Administrador", "ADMIN_SENHA_INICIAL",    "Admin@123",    "admin"),
-                ("Operador",      "OPERADOR_SENHA_INICIAL", "Operador@123", "operador"),
+                ("Master","MASTER_SENHA_INICIAL",   "Master@123",   "master"),
+                ("Admin", "ADMIN_SENHA_INICIAL",    "Admin@123",    "admin"),
+                ("Operador","OPERADOR_SENHA_INICIAL", "Operador@123", "operador"),
             ]
             for nome, env_var, senha_padrao, role in usuarios_seed:
                 senha = os.environ.get(env_var, senha_padrao)

@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import tkinter
+import matplotlib.pyplot as plt
 from tkinter import messagebox, filedialog
 import threading
 import os
@@ -81,44 +82,44 @@ class TelaLogin(ctk.CTk):
         self.lbl_erro.pack(pady=(14, 0))
 
     def _fazer_login(self):
-        nome  = self.entry_email.get().strip()
+        nome = self.entry_email.get().strip()
         senha = self.entry_senha.get()
 
         if not nome or not senha:
             self.lbl_erro.configure(text="Preencha usuário e senha.")
             return
 
-        self.btn_login.configure(state="disabled", text="Verificando...")
         self.lbl_erro.configure(text="")
-        self.after(80, self._validar, nome, senha)
+        self.btn_login.configure(state="disabled", text="Verificando...")
+        threading.Thread(target=self._validar, args=(nome, senha), daemon=True).start()
+        # Sem self.after() aqui — a thread já cuida do resto
 
     def _validar(self, nome, senha):
+        # Roda na thread de background — APENAS trabalho pesado, zero UI
         dados = self.banco.autenticar_usuario(nome, senha)
 
         if not dados:
-            self.banco.registrar_log(
-                "LOGIN_FALHOU",
-                f"Tentativa inválida para: {nome}",
-                email=nome
-            )
+            self.banco.registrar_log("LOGIN_FALHOU", f"Tentativa inválida para: {nome}", email=nome)
+
+        # Agenda o resultado de volta na thread principal — único ponto de contato com a UI
+        self.after(0, self._aplicar_resultado_login, dados, nome)
+
+    def _aplicar_resultado_login(self, dados, nome):
+        # Roda na thread principal via self.after() — pode tocar em widgets livremente
+        if not dados:
             self.lbl_erro.configure(text="Usuário ou senha incorretos.")
             self.btn_login.configure(state="normal", text="ENTRAR")
             return
 
+        self.banco.registrar_log("LOGIN", "Login realizado com sucesso",
+                                 id_usuario=dados["id"], email=dados["nome"])
         sessao_atual.logar(dados)
-        self.banco.registrar_log(
-            "LOGIN",
-            "Login realizado com sucesso",
-            id_usuario=dados["id"],
-            email=dados["nome"]
-        )
         self.destroy()
 
         if dados["trocar_senha"]:
             TelaTrocarSenha(self.banco).mainloop()
         else:
             AppPonto(self.banco).mainloop()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TELA DE TROCA DE SENHA (primeiro acesso obrigatório)
@@ -435,6 +436,7 @@ class AppPonto(ctk.CTk):
     def _reconstruir_tela_dashboard(self, dados):
         self._encerrar_tela_de_carregamento()
         if "Dashboard" in self.frames:
+            plt.close("all")
             self.frames["Dashboard"].destroy()
         self.frames["Dashboard"] = DashboardWindow(
             parent=self.container, controller=self, dados=dados
